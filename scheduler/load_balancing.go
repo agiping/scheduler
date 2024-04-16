@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+
+	"scheduler/utils"
 )
 
 // SkyServeLoadBalancer struct definition
@@ -15,7 +18,7 @@ type SkyServeLoadBalancer struct {
 	controllerURL       string
 	loadBalancerPort    int
 	loadBalancingPolicy LoadBalancingPolicy
-	requestAggregator   *RequestAggregator
+	requestAggregator   *utils.RequestAggregator
 	server              *gin.Engine
 	controllerSession   string
 }
@@ -29,7 +32,7 @@ func NewSkyServeLoadBalancer(controllerURL string, loadBalancerPort int, policy 
 		controllerURL:       controllerURL,
 		loadBalancerPort:    loadBalancerPort,
 		loadBalancingPolicy: policy,
-		requestAggregator:   NewRequestAggregator(),
+		requestAggregator:   utils.NewRequestAggregator(),
 		server:              router,
 	}
 
@@ -113,12 +116,17 @@ func copyRequest(original *http.Request) *http.Request {
 	return copy
 }
 
-// Main function setup
 func main() {
-	controllerAddr := "http://localhost:8000"
-	loadBalancerPort := 8080
-	policy := NewLeastNumberOfRequestsPolicy() // Assuming this policy implementation is available
+	controllerAddr := flag.String("controller-addr", "127.0.0.1", "The address of the controller.")
+	loadBalancerPort := flag.Int("load-balancer-port", 8890, "The port where the load balancer listens to.")
+	flag.Parse()
 
-	lb := NewSkyServeLoadBalancer(controllerAddr, loadBalancerPort, policy)
+	if *controllerAddr == "" || *loadBalancerPort == 0 {
+		log.Fatal("Controller address and load balancer port must be specified")
+	}
+
+	// Assuming the function NewSkyServeLoadBalancer and its related LoadBalancingPolicy are implemented
+	policy := NewLeastNumberOfRequestsPolicy() // Assuming this policy implementation is available
+	lb := NewSkyServeLoadBalancer(*controllerAddr, *loadBalancerPort, policy)
 	lb.Run()
 }
