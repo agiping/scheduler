@@ -25,6 +25,8 @@ const LBControllerSyncIntervalSeconds = 20
 type SkyServeLoadBalancer struct {
 	// app server of the load balancer
 	appServer *gin.Engine
+	// app client of the load balancer, used for sending requests to SkyServe controller
+	appClient *resty.Client
 	// controllerURL: the URL of the controller
 	controllerURL string
 	/***
@@ -40,20 +42,19 @@ type SkyServeLoadBalancer struct {
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// configuration of load balancing policy
-	loadBalancingPolicy    *policy.LeastNumberOfRequestsPolicy
-	requestAggregator      utils.RequestsAggregator
-	syncWithControllerChan chan bool
+	loadBalancingPolicy *policy.LeastNumberOfRequestsPolicy
+	requestAggregator   utils.RequestsAggregator
 }
 
 // Create a load balancer instance
 func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBalancer {
 	balancer := &SkyServeLoadBalancer{
-		appServer:              gin.Default(),
-		controllerURL:          controllerURL,
-		loadBalancerPort:       lbPort,
-		loadBalancingPolicy:    policy.NewLeastNumberOfRequestsPolicy(),
-		requestAggregator:      utils.NewRequestTimestamp(),
-		syncWithControllerChan: make(chan bool),
+		appServer:           gin.Default(),
+		appClient:           resty.New(),
+		controllerURL:       controllerURL,
+		loadBalancerPort:    lbPort,
+		loadBalancingPolicy: policy.NewLeastNumberOfRequestsPolicy(),
+		requestAggregator:   utils.NewRequestTimestamp(),
 	}
 
 	balancer.appServer.GET("/-/urls", balancer.getURLs)
@@ -79,39 +80,37 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 	time.Sleep(5 * time.Second) // Wait for the controller to bootstrap
 
 	for {
-		select {
-		case <-lb.syncWithControllerChan:
-			return
-		default:
-			client := resty.New()
-			resp, err := client.R().
-				SetHeader("Content-Type", "application/json").
-				SetBody(map[string]interface{}{
-					"request_aggregator": lb.requestAggregator.ToMap(),
-					"controller_session": lb.controllerSession,
-				}).
-				Post(lb.controllerURL + "/controller/load_balancer_sync")
+		resp, err := lb.appClient.R().
+			SetHeader("Content-Type", "application/json").
+			SetBody(map[string]interface{}{
+				"request_aggregator": lb.requestAggregator.ToMap(),
+				"controller_session": lb.controllerSession,
+			}).
+			Post(lb.controllerURL + "/controller/load_balancer_sync")
 
-			if err != nil {
-				log.Printf("An error occurred: %v\n", err)
-				continue
-			}
-
-			var result map[string]interface{}
-			if err := json.Unmarshal(resp.Body(), &result); err != nil {
-				log.Printf("Failed to decode response from controller: %v\n", err)
-				continue
-			}
-
-			readyReplicaUrls, _ := result["ready_replica_urls"].([]string)
-			controllerSession, _ := result["controller_session"].(string)
-
-			lb.controllerSession = controllerSession
-			lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
-			lb.requestAggregator.Clear()
-
-			time.Sleep(time.Duration(LBControllerSyncIntervalSeconds) * time.Second)
+		if err != nil {
+			log.Printf("Error occurred during sync with controller: %v\n", err)
+			continue
 		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(resp.Body(), &result); err != nil {
+			log.Printf("Failed to decode response from controller: %v\n", err)
+			continue
+		}
+
+		readyReplicaUrls, _ := result["ready_replica_urls"].([]string)
+		controllerSession, _ := result["controller_session"].(string)
+
+		log.Printf("Controller session: %s\n", controllerSession)
+		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
+		lb.controllerSession = controllerSession
+		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
+		// Clean up after reporting request information to avoid OOM.
+		lb.requestAggregator.Clear()
+
+		time.Sleep(time.Duration(LBControllerSyncIntervalSeconds) * time.Second)
+
 	}
 }
 

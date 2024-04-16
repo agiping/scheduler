@@ -12,12 +12,14 @@ func main() {
 	loadBalancerPort := flag.Int("load-balancer-port", 8890, "The port where the load balancer listens to.")
 	flag.Parse()
 
-	if *controllerAddr == "" || *loadBalancerPort == 0 {
-		log.Fatal("Controller address and load balancer port must be specified")
+	if *controllerAddr == "" {
+		log.Fatal("Controller address must be specified")
 	}
 
-	// Assuming the function NewSkyServeLoadBalancer and its related LoadBalancingPolicy are implemented
-	// policy := NewLeastNumberOfRequestsPolicy() // Assuming this policy implementation is available
+	if *loadBalancerPort <= 0 || *loadBalancerPort > 65535 {
+		log.Fatal("Load balancer port must be specified and in the valid range, e.g., [1, 65535]")
+	}
+
 	lb := balancer.NewSkyServeLoadBalancer(*controllerAddr, *loadBalancerPort)
 	lb.Run()
 }
