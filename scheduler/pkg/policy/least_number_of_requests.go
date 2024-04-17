@@ -2,6 +2,7 @@ package policy
 
 import (
 	"log"
+	"net/http"
 	"sync"
 )
 
@@ -34,7 +35,7 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the replica with the least number of connections.
-func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *Request) *string {
+func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) *string {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 

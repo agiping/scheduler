@@ -28,6 +28,8 @@ const LBControllerSyncIntervalSeconds = 20
 // LoadBalancer structure for controlling proxying of endpoint replicas
 type SkyServeLoadBalancer struct {
 	// app server of the load balancer
+	// TODO(Ping Zhang): Currently, we use gin, we will consider other high performance frameworks in case of need
+	// e.g., Beego, Iris, Echo, Fiber, etc.
 	appServer *gin.Engine
 	// app client of the load balancer, used for sending requests to SkyServe controller
 	appClient *resty.Client
@@ -64,6 +66,8 @@ func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBala
 		requestAggregator:   utils.NewRequestTimestamp(),
 	}
 
+	// "/-/urls" is a special endpoint for deploying our scheduler,
+	// which has higher priority than "/*path" during router matching.
 	balancer.appServer.GET("/-/urls", balancer.getURLs)
 	balancer.appServer.Any("/*path", balancer.handleRequest)
 
@@ -135,7 +139,13 @@ func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
 }
 
 // proxyRequest proxies the incoming request to the selected service replica.
-func (lb *SkyServeLoadBalancer) proxyRequest(ctx context.Context, method, url string, bodyBytes []byte, headers http.Header, stream bool, callback func()) (*http.Response, error) {
+func (lb *SkyServeLoadBalancer) proxyRequest(
+	ctx context.Context,
+	method, url string,
+	bodyBytes []byte,
+	headers http.Header,
+	stream bool,
+	callback func()) (*http.Response, error) {
 	client := &http.Client{
 		Timeout: time.Second * 370, // Setting overall timeout slightly more than read timeout
 	}
@@ -173,21 +183,28 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	req := c.Request
 	path := req.URL.Path
 	var isStream bool
-	if path == "/generate_stream" || path == "/generate" {
-		// Placeholder for request aggregation
+	var urlWithHTTP string
+	// Omit the requests other than /generate_stream and /generate for autoscaling
+	// e.g., heatlh check, metrics, etc.
+	if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
 		lb.requestAggregator.Add(req)
 	}
-	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(policy.NewRequest(req)) // Implement your load balancing policy to get replica URL
+	if strings.HasSuffix(path, "/generate_stream") {
+		isStream = true
+	}
+	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(req) // Implement your load balancing policy to get replica URL
 
 	if *readyReplicaURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
 		return
 	}
 
-	if !strings.HasPrefix(*readyReplicaURL, "http://") {
-		*readyReplicaURL = "http://" + *readyReplicaURL
+	if !startsWithHTTP(*readyReplicaURL) {
+		urlWithHTTP = "http://" + *readyReplicaURL
+	} else {
+		urlWithHTTP = *readyReplicaURL
 	}
-	targetURL := *readyReplicaURL + path
+	targetURL := urlWithHTTP + path
 
 	log.Printf("Proxying request to %s", targetURL)
 
@@ -197,9 +214,15 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 		return
 	}
 
-	resp, err := lb.proxyRequest(c, req.Method, targetURL, bodyBytes, req.Header, isStream, func() {
-		// Release connection or other clean up
-	})
+	resp, err := lb.proxyRequest(c,
+		req.Method,
+		targetURL,
+		bodyBytes,
+		req.Header,
+		isStream,
+		func() {
+			lb.loadBalancingPolicy.UpdateNumberOfRequests(*readyReplicaURL)
+		})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to proxy request: %v", err)})
 		return

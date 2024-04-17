@@ -3,6 +3,7 @@ package policy
 import (
 	"log"
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -35,7 +36,7 @@ func (p *RoundRobinPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the next replica in a round-robin fashion.
-func (p *RoundRobinPolicy) SelectReplica(request *Request) *string {
+func (p *RoundRobinPolicy) SelectReplica(request *http.Request) *string {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
