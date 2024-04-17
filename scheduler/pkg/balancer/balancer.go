@@ -44,7 +44,7 @@ type SkyServeLoadBalancer struct {
 	unavailable, although the old replicas are still
 	in service.
 	***/
-	controllerSession string
+	controllerSession *string
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// configuration of load balancing policy
@@ -119,7 +119,10 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 
 		log.Printf("Controller session: %s\n", controllerSession)
 		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
-		lb.controllerSession = controllerSession
+		if lb.controllerSession == nil || *lb.controllerSession != controllerSession {
+			lb.controllerSession = &controllerSession
+		}
+
 		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
 		// Clean up after reporting request information to avoid OOM.
 		lb.requestAggregator.Clear()
