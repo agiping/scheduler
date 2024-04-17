@@ -54,6 +54,9 @@ type SkyServeLoadBalancer struct {
 
 // Create a load balancer instance
 func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBalancer {
+	// Set the gin mode to release mode
+	// uncomment to debug
+	gin.SetMode(gin.ReleaseMode)
 	client := resty.New()
 	client.SetTimeout(5 * time.Second)
 
@@ -66,10 +69,10 @@ func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBala
 		requestAggregator:   utils.NewRequestTimestamp(),
 	}
 
-	// "/-/urls" is a special endpoint for deploying our scheduler,
-	// which has higher priority than "/*path" during router matching.
+	// "/-/urls" is a special endpoint for deploying scheduler.
 	balancer.appServer.GET("/-/urls", balancer.getURLs)
-	balancer.appServer.Any("/*path", balancer.handleRequest)
+	balancer.appServer.Any("/generate", balancer.handleRequest)
+	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
 
 	return balancer
 }
@@ -163,7 +166,7 @@ func (lb *SkyServeLoadBalancer) proxyRequest(
 		}
 		go func() {
 			defer resp.Body.Close()
-			io.Copy(os.Stdout, resp.Body) // Example: stream to stdout, modify as needed.
+			io.Copy(os.Stdout, resp.Body) // stream to stdout.
 			if callback != nil {
 				callback()
 			}

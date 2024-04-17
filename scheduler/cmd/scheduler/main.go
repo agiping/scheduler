@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	controllerAddr := flag.String("controller-addr", "127.0.0.1", "The address of the controller.")
+	controllerAddr := flag.String("controller-addr", "http://127.0.0.1", "The address of the controller.")
 	loadBalancerPort := flag.Int("load-balancer-port", 8890, "The port where the load balancer listens to.")
 	flag.Parse()
 
