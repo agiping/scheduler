@@ -113,9 +113,26 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 			log.Printf("Failed to decode response from controller: %v\n", err)
 			continue
 		}
+		log.Printf("result: %v", result)
 
-		readyReplicaUrls, _ := result["ready_replica_urls"].([]string)
-		controllerSession, _ := result["controller_session"].(string)
+		var readyReplicaUrls []string
+		// assert the type of ready_replica_urls
+		if urls, ok := result["ready_replica_urls"].([]interface{}); ok {
+			for _, url := range urls {
+				if strUrl, ok := url.(string); ok {
+					readyReplicaUrls = append(readyReplicaUrls, strUrl)
+				}
+			}
+		} else {
+			log.Printf("ready_replica_urls is expected to be []interface{}, while it is not.\n")
+			continue
+		}
+
+		controllerSession, yes := result["controller_session"].(string)
+		if !yes {
+			log.Printf("controllerSession is expected to be a string, which is not.\n")
+			continue
+		}
 
 		log.Printf("Controller session: %s\n", controllerSession)
 		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
