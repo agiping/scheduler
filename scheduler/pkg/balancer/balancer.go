@@ -1,14 +1,11 @@
 package balancer
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -24,6 +21,9 @@ import (
 // replica ips for each service, also send the number of requests in last query
 // interval.
 const LBControllerSyncIntervalSeconds = 20
+
+// Timeout for proxying requests to replicas.
+const TimeOutOfRequestProxying = 600
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
 type SkyServeLoadBalancer struct {
@@ -107,13 +107,11 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 			continue
 		}
 
-		log.Printf("Response body: %s", string(resp.Body()))
 		var result map[string]interface{}
 		if err := json.Unmarshal(resp.Body(), &result); err != nil {
 			log.Printf("Failed to decode response from controller: %v\n", err)
 			continue
 		}
-		log.Printf("result: %v", result)
 
 		var readyReplicaUrls []string
 		// assert the type of ready_replica_urls
@@ -162,46 +160,6 @@ func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
 	})
 }
 
-// proxyRequest proxies the incoming request to the selected service replica.
-func (lb *SkyServeLoadBalancer) proxyRequest(
-	ctx context.Context,
-	method, url string,
-	bodyBytes []byte,
-	headers http.Header,
-	stream bool,
-	callback func()) (*http.Response, error) {
-	client := &http.Client{
-		Timeout: time.Second * 370, // Setting overall timeout slightly more than read timeout
-	}
-
-	proxyReq, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
-	proxyReq.Header = headers
-
-	if stream {
-		resp, err := client.Do(proxyReq)
-		if err != nil {
-			return nil, err
-		}
-		go func() {
-			defer resp.Body.Close()
-			io.Copy(os.Stdout, resp.Body) // stream to stdout.
-			if callback != nil {
-				callback()
-			}
-		}()
-		return resp, nil
-	} else {
-		resp, err := client.Do(proxyReq)
-		if callback != nil {
-			callback()
-		}
-		return resp, err
-	}
-}
-
 // handleRequest manages incoming requests by proxying them to service replicas.
 func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	req := c.Request
@@ -216,7 +174,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	if strings.HasSuffix(path, "/generate_stream") {
 		isStream = true
 	}
-	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(req) // Implement your load balancing policy to get replica URL
+	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(req)
 
 	if *readyReplicaURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
@@ -232,38 +190,48 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 
 	log.Printf("Proxying request to %s", targetURL)
 
-	bodyBytes, err := io.ReadAll(req.Body)
+	client := &http.Client{
+		Timeout: time.Second * time.Duration(TimeOutOfRequestProxying),
+	}
+	proxyReq, err := http.NewRequestWithContext(c, req.Method, targetURL, req.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading request body"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create proxy request: " + err.Error()})
 		return
 	}
+	proxyReq.Header = req.Header.Clone()
 
-	resp, err := lb.proxyRequest(c,
-		req.Method,
-		targetURL,
-		bodyBytes,
-		req.Header,
-		isStream,
-		func() {
-			lb.loadBalancingPolicy.UpdateNumberOfRequests(*readyReplicaURL)
-		})
+	resp, err := client.Do(proxyReq)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to proxy request: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to proxy request: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response"})
-		return
-	}
 
+	setResponseHeaders(c, resp)
+
+	if isStream {
+		// Stream response directly to client
+		io.Copy(c.Writer, resp.Body)
+	} else {
+		// For non-stream, read all and then send
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response"})
+			return
+		}
+		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
+	// Once finished, update the number of requests for the selected replica
+	lb.loadBalancingPolicy.UpdateNumberOfRequests(*readyReplicaURL)
+}
+
+func setResponseHeaders(c *gin.Context, resp *http.Response) {
+	c.Writer.WriteHeader(resp.StatusCode)
 	for key, values := range resp.Header {
 		for _, value := range values {
 			c.Writer.Header().Add(key, value)
 		}
 	}
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 }
 
 func startsWithHTTP(s string) bool {
