@@ -36,17 +36,17 @@ func (p *RoundRobinPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the next replica in a round-robin fashion.
-func (p *RoundRobinPolicy) SelectReplica(request *http.Request) *string {
+func (p *RoundRobinPolicy) SelectReplica(request *http.Request) string {
 	p.PoLock.RLock()
 	defer p.PoLock.RUnlock()
 
 	if len(p.ReadyReplicas) == 0 {
-		return nil
+		return ""
 	}
 
 	replica := p.ReadyReplicas[p.index]
 	p.index = (p.index + 1) % len(p.ReadyReplicas)
 
 	log.Printf("Selected replica %s for request %v\n", replica, request)
-	return &replica
+	return replica
 }

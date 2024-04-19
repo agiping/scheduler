@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -94,17 +95,109 @@ func (cp *CacheAwarePolicy) cleanPodSet(removedPod *Pod) {
 	}
 }
 
-// selectLeastLoadedPod selects the pod with the least number of requests.
-func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) *string {
+func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
+	// TODO(Ping Zhang): Abstract out the request validation logic.
+	var reqSession struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&reqSession); err != nil {
+		log.Printf("Invalid request: %v", request)
+		return ""
+	}
+
+	var selectedPod *Pod
+	cp.Mutex.RLock()
+	if reqSession.SessionID == "" {
+		// Stateless request handling
+		selectedPod = cp.selectReplicaForStateless()
+	} else {
+		// Stateful request handling with session cache
+		selectedPod = cp.selectReplicaForStateful(reqSession.SessionID)
+	}
+	cp.Mutex.RUnlock()
+
+	if selectedPod == nil {
+		return ""
+	}
+
+	return selectedPod.IP
+}
+
+func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
 	var minPod *Pod
-	minRequests := int(^uint(0) >> 1) // Max int
-	for _, p := range pods {
-		if p.AcceptStateless && p.NumberOfRequests < minRequests {
-			minRequests = p.NumberOfRequests
-			minPod = p
+	// Max int
+	minRequests := int(^uint(0) >> 1)
+	for _, pod := range cp.ReadyReplicas {
+		if pod.RejectStateless {
+			continue
+		}
+		if pod.NumberOfRequests < minRequests {
+			minRequests = pod.NumberOfRequests
+			minPod = pod
 		}
 	}
+
+	// If all pods were overloaded, fall back to selection from global pool
+	if minPod == nil {
+		// TODO(Ping Zhang): Trigger a event for scale up.
+		log.Print("All pods are overloaded, We may proactively trigger a event for autoscaler to scale up.")
+		for _, pod := range cp.ReadyReplicas {
+			if pod.NumberOfRequests < minRequests {
+				minRequests = pod.NumberOfRequests
+				minPod = pod
+			}
+		}
+	}
+
 	return minPod
+}
+
+func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
+	pods, exists := cp.PodSet[sessionID]
+	if !exists || len(pods) == 0 {
+		return cp.selectReplicaForStateless()
+	}
+
+	var minPod *Pod
+	minRequests := int(^uint(0) >> 1) // Max int
+	for _, pod := range pods {
+		if pod.NumberOfRequests < minRequests {
+			minRequests = pod.NumberOfRequests
+			minPod = pod
+		}
+	}
+
+	//////////////////////////////
+
+	// Stateful request handling with session affinity
+	pods, exists := podSet[input.SessionID]
+	if !exists || len(pods) == 0 {
+		selectedPod = selectLeastLoadedPod(allPods)
+		podSet[input.SessionID] = []*Pod{selectedPod}
+		lastModified[input.SessionID] = time.Now()
+	} else {
+		selectedPod = selectLeastLoadedPod(pods)
+		if checkForRebalance(selectedPod, pods) {
+			newPod := selectLeastLoadedPod(allPods)
+			podSet[input.SessionID] = append(podSet[input.SessionID], newPod)
+			selectedPod = newPod
+		}
+		shrinkIfNeeded(input.SessionID)
+	}
+
+	return minPod
+}
+
+func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
+	cp.Mutex.Lock()
+	defer cp.Mutex.Unlock()
+
+	for _, pod := range cp.ReadyReplicas {
+		if pod.IP == podIP {
+			pod.NumberOfRequests++
+			break
+		}
+	}
 }
 
 // checkForRebalance checks if rebalancing is needed for the pod set.

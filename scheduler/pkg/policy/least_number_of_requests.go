@@ -35,13 +35,13 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the replica with the least number of connections.
-func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) *string {
+func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) string {
 	p.PoLock.RLock()
 	defer p.PoLock.RUnlock()
 
 	if len(p.ReadyReplicas) == 0 {
 		log.Printf("No replicas available for request %v\n", request)
-		return nil
+		return ""
 	}
 
 	var selectedReplica string
@@ -56,11 +56,11 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) *stri
 
 	p.connectionsCount[selectedReplica]++
 	log.Printf("Selected replica %s for request %v\n", selectedReplica, request)
-	return &selectedReplica
+	return selectedReplica
 }
 
 // UpdateNumberOfRequests records a connection to a replica.
-func (p *LeastNumberOfRequestsPolicy) UpdateNumberOfRequests(replica string) {
+func (p *LeastNumberOfRequestsPolicy) UpdateAfterResponse(replica string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 

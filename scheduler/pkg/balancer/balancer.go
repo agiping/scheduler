@@ -181,15 +181,15 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	}
 	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(req)
 
-	if *readyReplicaURL == "" {
+	if readyReplicaURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
 		return
 	}
 
-	if !startsWithHTTP(*readyReplicaURL) {
-		urlWithHTTP = "http://" + *readyReplicaURL
+	if !startsWithHTTP(readyReplicaURL) {
+		urlWithHTTP = "http://" + readyReplicaURL
 	} else {
-		urlWithHTTP = *readyReplicaURL
+		urlWithHTTP = readyReplicaURL
 	}
 	targetURL := urlWithHTTP + path
 
@@ -227,7 +227,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
 	// Once finished, update the number of requests for the selected replica
-	lb.loadBalancingPolicy.UpdateNumberOfRequests(*readyReplicaURL)
+	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
 }
 
 func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
