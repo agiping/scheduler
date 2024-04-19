@@ -120,6 +120,8 @@ func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
 		return ""
 	}
 
+	selectedPod.NumberOfRequests++
+	log.Printf("Selected replica %s for request %v\n", selectedPod.IP, request)
 	return selectedPod.IP
 }
 
@@ -140,13 +142,9 @@ func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
 	// If all pods were overloaded, fall back to selection from global pool
 	if minPod == nil {
 		// TODO(Ping Zhang): Trigger a event for scale up.
+		// Reminder: Avoid repeated scale up events.
 		log.Print("All pods are overloaded, We may proactively trigger a event for autoscaler to scale up.")
-		for _, pod := range cp.ReadyReplicas {
-			if pod.NumberOfRequests < minRequests {
-				minRequests = pod.NumberOfRequests
-				minPod = pod
-			}
-		}
+		minPod = findMinPod(cp.ReadyReplicas)
 	}
 
 	return minPod
@@ -155,108 +153,48 @@ func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
 func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
 	pods, exists := cp.PodSet[sessionID]
 	if !exists || len(pods) == 0 {
-		return cp.selectReplicaForStateless()
+		minPod := cp.selectReplicaForStateless()
+		// Since there's no entry for this sessionID or it's empty, create or update directly
+		cp.PodSet[sessionID] = []*Pod{minPod}
+		// Update last modified timestamp for this sessionID
+		cp.LastModified[sessionID] = time.Now()
+		return minPod
 	}
 
-	var minPod *Pod
-	minRequests := int(^uint(0) >> 1) // Max int
-	for _, pod := range pods {
-		if pod.NumberOfRequests < minRequests {
-			minRequests = pod.NumberOfRequests
-			minPod = pod
+	minPod := findMinPod(pods)
+	maxPod := findMaxPod(pods)
+
+	log.Printf("minPod: %v, maxPod: %v", minPod, maxPod)
+
+	/***
+	  I. Prevention Mode: Pod is highly overloaded.
+	  If the queue size of the pod with the fewest requests exceeds twice the value of QHigh,
+	  the pod is considered to be highly overloaded.
+	  In such cases, set the RejectStateless flag to true for all pods within the pod set.
+	  This action prevents the pod from being selected for processing stateless requests.
+	  The goal is to maximize the utilization of the SessionCache data available on the pod,
+	  thereby optimizing resource allocation and performance.
+	  ***/
+	if minPod.TgiQueueSize >= 2*QHigh {
+		for _, pod := range pods {
+			pod.RejectStateless = true
 		}
+		// do something
 	}
 
-	//////////////////////////////
-
-	// Stateful request handling with session affinity
-	pods, exists := podSet[input.SessionID]
-	if !exists || len(pods) == 0 {
-		selectedPod = selectLeastLoadedPod(allPods)
-		podSet[input.SessionID] = []*Pod{selectedPod}
-		lastModified[input.SessionID] = time.Now()
-	} else {
-		selectedPod = selectLeastLoadedPod(pods)
-		if checkForRebalance(selectedPod, pods) {
-			newPod := selectLeastLoadedPod(allPods)
-			podSet[input.SessionID] = append(podSet[input.SessionID], newPod)
-			selectedPod = newPod
-		}
-		shrinkIfNeeded(input.SessionID)
+	/***
+	  II. Replication Mode: Pod is overloaded.
+	  If the queue size of the pod with the fewest requests exceeds QHigh,
+	  the pod is considered to be overloaded.
+	  In such cases, we add a new pod into PodSet for current sessionID, which means
+	  the cache would be replicated.
+	  ***/
+	if minPod.TgiQueueSize >= QHigh && minPod.TgiQueueSize < 2*QHigh {
+		// do something
+		log.Printf("do something")
 	}
 
-	return minPod
-}
-
-func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
-	cp.Mutex.Lock()
-	defer cp.Mutex.Unlock()
-
-	for _, pod := range cp.ReadyReplicas {
-		if pod.IP == podIP {
-			pod.NumberOfRequests++
-			break
-		}
-	}
-}
-
-// checkForRebalance checks if rebalancing is needed for the pod set.
-func (cp *CacheAwarePolicy) CheckForRebalance(selectedPod *Pod, pods []*Pod) bool {
-	for _, p := range pods {
-		if p.TgiQueueSize > 2*QHigh {
-			p.AcceptStateless = false
-			return true
-		}
-	}
-	return false
-}
-
-// shrinkIfNeeded performs shrinking of the pod set if needed.
-func (cp *CacheAwarePolicy) ShrinkIfNeeded(sessionID string) {
-	if time.Since(lastModified[sessionID]) > PodSetSizeControlInterval && len(podSet[sessionID]) > 1 {
-		// Remove the pod with the highest number of requests
-		var maxPod *Pod
-		maxRequests := 0
-		for _, p := range podSet[sessionID] {
-			if p.NumberOfRequests > maxRequests {
-				maxRequests = p.NumberOfRequests
-				maxPod = p
-			}
-		}
-		// Remove maxPod from podSet
-		newPodSet := []*Pod{}
-		for _, p := range podSet[sessionID] {
-			if p != maxPod {
-				newPodSet = append(newPodSet, p)
-			}
-		}
-		podSet[sessionID] = newPodSet
-		lastModified[sessionID] = time.Now()
-	}
-}
-
-// func main() {
-// 	http.HandleFunc("/generate", HandleRequest)
-// 	log.Fatal(http.ListenAndServe(":80", nil))
-// }
-
-// HandleRequest handles incoming requests.
-func HandleRequest(w http.ResponseWriter, req *http.Request) {
-	var input struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&input); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	var selectedPod *Pod
-	mutex.Lock()
-	if input.SessionID == "" {
-		// Stateless request handling
-		selectedPod = selectLeastLoadedPod(allPods)
-	} else {
-		// Stateful request handling with session affinity
+	/***
 		pods, exists := podSet[input.SessionID]
 		if !exists || len(pods) == 0 {
 			selectedPod = selectLeastLoadedPod(allPods)
@@ -271,14 +209,90 @@ func HandleRequest(w http.ResponseWriter, req *http.Request) {
 			}
 			shrinkIfNeeded(input.SessionID)
 		}
+	    ***/
+
+	return minPod
+}
+
+// CheckForScaleCache checks if cache is needed for replication on new pod.
+func (cp *CacheAwarePolicy) CheckForScaleCache(selectedPod *Pod, pods []*Pod) bool {
+	for _, p := range pods {
+		if p.TgiQueueSize > QHigh {
+			p.RejectStateless = true
+			return true
+		}
 	}
-	mutex.Unlock()
+	return false
+}
 
-	// Simulate sending request to the selected pod
-	selectedPod.Mutex.Lock()
-	selectedPod.NumberOfRequests++
-	selectedPod.Mutex.Unlock()
+func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
+	cp.Mutex.Lock()
+	defer cp.Mutex.Unlock()
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Request handled by pod: " + selectedPod.IP))
+	for _, pod := range cp.ReadyReplicas {
+		if pod.IP == podIP {
+			pod.NumberOfRequests--
+			if pod.RejectStateless && pod.NumberOfRequests < QHigh {
+				pod.RejectStateless = false
+			}
+			return
+		}
+	}
+}
+
+// ShrinkCacheReplicationIfNeeded performs shrinking of the pod set if needed.
+func (cp *CacheAwarePolicy) ShrinkCacheReplicationIfNeeded(sessionID string) {
+	if time.Since(cp.LastModified[sessionID]) > PodSetSizeControlInterval && len(cp.PodSet[sessionID]) > 1 {
+		// Remove the pod with the highest number of requests
+		var maxPod *Pod
+		maxRequests := 0
+		for _, p := range cp.PodSet[sessionID] {
+			if p.NumberOfRequests > maxRequests {
+				maxRequests = p.NumberOfRequests
+				maxPod = p
+			}
+		}
+		// Remove maxPod from podSet
+		newPodSet := []*Pod{}
+		for _, p := range cp.PodSet[sessionID] {
+			if p != maxPod {
+				newPodSet = append(newPodSet, p)
+			}
+		}
+		cp.PodSet[sessionID] = newPodSet
+		cp.LastModified[sessionID] = time.Now()
+	}
+}
+
+// func main() {
+// 	http.HandleFunc("/generate", HandleRequest)
+// 	log.Fatal(http.ListenAndServe(":80", nil))
+// }
+
+// findMinPod returns the pod with the minimum number of requests from the given list of pods.
+func findMinPod(pods []*Pod) *Pod {
+	var minPod *Pod
+	minRequests := int(^uint(0) >> 1)
+
+	for _, pod := range pods {
+		if pod.NumberOfRequests < minRequests {
+			minRequests = pod.NumberOfRequests
+			minPod = pod
+		}
+	}
+	return minPod
+}
+
+// findMaxPod returns the pod with the maximum number of requests from the given list of pods.
+func findMaxPod(pods []*Pod) *Pod {
+	var maxPod *Pod
+	maxRequests := -1
+
+	for _, pod := range pods {
+		if pod.NumberOfRequests > maxRequests {
+			maxRequests = pod.NumberOfRequests
+			maxPod = pod
+		}
+	}
+	return maxPod
 }
