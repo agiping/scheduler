@@ -6,6 +6,6 @@ import (
 
 // LoadBalancingPolicy is an interface for load balancing policies.
 type LoadBalancingPolicy interface {
-	SetReadyReplicas(replicas []string)
-	SelectReplica(request *http.Request) *string
+	SetReadyReplicas(replicas []interface{})
+	SelectReplica(request *http.Request) interface{}
 }
