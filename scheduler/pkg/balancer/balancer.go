@@ -7,23 +7,26 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
 
+	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/utils"
 )
 
-// The time interval in seconds for load balancer to sync with controller. Every
-// time the load balancer syncs with controller, it will update all available
-// replica ips for each service, also send the number of requests in last query
-// interval.
-const LBControllerSyncIntervalSeconds = 20
-
-// Timeout for proxying requests to replicas.
-const TimeOutOfRequestProxying = 600
+const (
+	// The time interval in seconds for load balancer to sync with controller. Every
+	// time the load balancer syncs with controller, it will update all available
+	// replica ips for each service, also send the number of requests in last query
+	// interval.
+	LBControllerSyncInterval = 5 * time.Second
+	// Timeout for proxying requests to replicas.
+	TimeOutOfRequestProxying = 600
+)
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
 type SkyServeLoadBalancer struct {
@@ -47,7 +50,7 @@ type SkyServeLoadBalancer struct {
 	controllerSession *string
 	// the port where the load balancer listens to.
 	loadBalancerPort int
-	// configuration of load balancing policy
+	// TODO(Ping Zhang): We need to support configuration of load balancing policy
 	loadBalancingPolicy *policy.LeastNumberOfRequestsPolicy
 	requestAggregator   utils.RequestsAggregator
 }
@@ -142,13 +145,15 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 		// Clean up after reporting request information to avoid OOM.
 		lb.requestAggregator.Clear()
 
-		time.Sleep(time.Duration(LBControllerSyncIntervalSeconds) * time.Second)
+		time.Sleep(LBControllerSyncInterval)
 
 	}
 }
 
 func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
+	lb.loadBalancingPolicy.PoLock.RLock()
 	readyReplicaUrls := lb.loadBalancingPolicy.ReadyReplicas
+	lb.loadBalancingPolicy.PoLock.RUnlock()
 	for i, url := range readyReplicaUrls {
 		if !startsWithHTTP(url) {
 			readyReplicaUrls[i] = "http://" + url
@@ -225,6 +230,56 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	lb.loadBalancingPolicy.UpdateNumberOfRequests(*readyReplicaURL)
 }
 
+func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
+	client := &http.Client{}
+	collector := metrics.NewTgiQueueSizeCollector(client)
+	ticker := time.NewTicker(metrics.CollectionInterval)
+	defer ticker.Stop()
+
+	// Wait for the loadbalancer to sync with the controller
+	time.Sleep(10 * time.Second)
+	// Limit the number of concurrent requests
+	concurrencyControl := make(chan struct{}, metrics.MaxConcurrency)
+
+	for {
+		<-ticker.C
+		roundStart := time.Now()
+		var wg sync.WaitGroup
+		// TODO (Ping Zhang): refactor to use a channel to update the ReadyReplicas only when its changed,
+		// by that way, we can reduce the usage of lock and improve the performance.
+		lb.loadBalancingPolicy.PoLock.RLock()
+		replicaUrls := lb.loadBalancingPolicy.ReadyReplicas
+		lb.loadBalancingPolicy.PoLock.RUnlock()
+		for _, url := range replicaUrls {
+			wg.Add(1)
+			go func(url string) {
+				defer wg.Done()
+				// obtain a permit
+				concurrencyControl <- struct{}{}
+				if err := collector.Collect(url); err != nil {
+					fmt.Printf("Error collecting from %s: %v\n", url, err)
+				}
+				// release the permit
+				<-concurrencyControl
+			}(url)
+		}
+		// wait for all requests to finish
+		wg.Wait()
+		roundEnd := time.Now()
+		fmt.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
+		// print the queue size for each replica
+		metrics.PrintSortedQueueSizes(collector)
+	}
+}
+
+func (lb *SkyServeLoadBalancer) Run() {
+	go lb.syncWithController()
+	go lb.startCollectingQueueSize()
+
+	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
+	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
+}
+
 func setResponseHeaders(c *gin.Context, resp *http.Response) {
 	c.Writer.WriteHeader(resp.StatusCode)
 	for key, values := range resp.Header {
@@ -236,11 +291,4 @@ func setResponseHeaders(c *gin.Context, resp *http.Response) {
 
 func startsWithHTTP(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
-}
-
-func (lb *SkyServeLoadBalancer) Run() {
-	go lb.syncWithController()
-
-	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
-	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
 }

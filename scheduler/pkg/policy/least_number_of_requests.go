@@ -10,7 +10,7 @@ import (
 type LeastNumberOfRequestsPolicy struct {
 	ReadyReplicas    []string
 	connectionsCount map[string]int
-	lock             sync.Mutex
+	PoLock           sync.RWMutex // use a read-write lock to allow multiple readers.
 }
 
 // NewLeastNumberOfRequestsPolicy creates a new instance of LeastNumberOfRequestsPolicy.
@@ -22,8 +22,8 @@ func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 
 // SetReadyReplicas sets the list of available replicas.
 func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.PoLock.Lock()
+	defer p.PoLock.Unlock()
 
 	newConnectionsCount := make(map[string]int)
 	for _, replica := range replicas {
@@ -36,8 +36,8 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 
 // SelectReplica selects the replica with the least number of connections.
 func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) *string {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.PoLock.RLock()
+	defer p.PoLock.RUnlock()
 
 	if len(p.ReadyReplicas) == 0 {
 		log.Printf("No replicas available for request %v\n", request)
@@ -61,8 +61,8 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) *stri
 
 // UpdateNumberOfRequests records a connection to a replica.
 func (p *LeastNumberOfRequestsPolicy) UpdateNumberOfRequests(replica string) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.PoLock.Lock()
+	defer p.PoLock.Unlock()
 
 	if _, ok := p.connectionsCount[replica]; ok {
 		p.connectionsCount[replica] = max(0, p.connectionsCount[replica]-1)

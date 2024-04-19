@@ -12,9 +12,9 @@ import (
 
 const (
 	// The interval at which to collect the queue size from each replica
-	collectionInterval = 2 * time.Second
+	CollectionInterval = 2 * time.Second
 	// The maximum number of concurrent requests to make for metrics collection
-	maxConcurrency = 50
+	MaxConcurrency = 50
 )
 
 type TgiQueueSizeCollector struct {
@@ -30,13 +30,15 @@ func NewTgiQueueSizeCollector(client *http.Client) *TgiQueueSizeCollector {
 }
 
 func (tqs *TgiQueueSizeCollector) Collect(replicaUrl string) error {
-	replicaUrl = rebuildUrls(replicaUrl)
-	resp, err := tqs.Client.Get(replicaUrl)
+	getUrl := rebuildUrls(replicaUrl)
+	resp, err := tqs.Client.Get(getUrl)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
+	// TODO (Ping Zhang): We may want to limit the size of data read from the response body
+	// to improve performance.
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -56,14 +58,26 @@ func (tqs *TgiQueueSizeCollector) Collect(replicaUrl string) error {
 			if err != nil {
 				return err
 			}
-			tqs.ReplicaQueueSize.Store(replicaUrl, queueSize)
+			// update the queue size only if it has changed
+			if qsize, exist := tqs.ReplicaQueueSize.Load(replicaUrl); !exist || qsize.(int) != queueSize {
+				tqs.ReplicaQueueSize.Store(replicaUrl, queueSize)
+			}
 			break
 		}
 	}
 	return nil
 }
 
-func printSortedQueueSizes(collector *TgiQueueSizeCollector) {
+// collector expects the metrics endpoint to be at /metrics of tgi
+func rebuildUrls(url string) string {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "http://" + url
+	}
+	return url + "/metrics"
+}
+
+// PrintSortedQueueSizes prints the queue size in a table format.
+func PrintSortedQueueSizes(collector *TgiQueueSizeCollector) {
 	fmt.Println()
 	var replicas []string
 	queueSizes := make(map[string]int)
@@ -83,55 +97,3 @@ func printSortedQueueSizes(collector *TgiQueueSizeCollector) {
 		fmt.Printf("%-50s %d\n", replica, queueSizes[replica])
 	}
 }
-
-// collector expects the metrics endpoint to be at /metrics of tgi
-func rebuildUrls(url string) string {
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		url = "http://" + url
-	}
-	return url + "/metrics"
-}
-
-func StartCollecting(replicaUrls []string) {
-	client := &http.Client{}
-	collector := NewTgiQueueSizeCollector(client)
-	ticker := time.NewTicker(collectionInterval)
-	defer ticker.Stop()
-
-	// limit the number of concurrent requests
-	concurrencyControl := make(chan struct{}, maxConcurrency)
-
-	for {
-		<-ticker.C
-		roundStart := time.Now()
-		var wg sync.WaitGroup
-		for _, url := range replicaUrls {
-			wg.Add(1)
-			go func(url string) {
-				defer wg.Done()
-				// obtain a permit
-				concurrencyControl <- struct{}{}
-				if err := collector.Collect(url); err != nil {
-					fmt.Printf("Error collecting from %s: %v\n", url, err)
-				}
-				// release the permit
-				<-concurrencyControl
-			}(url)
-		}
-		// wait for all requests to finish
-		wg.Wait()
-		roundEnd := time.Now()
-		fmt.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
-		// print the queue size for each replica
-		printSortedQueueSizes(collector)
-	}
-}
-
-// func main() {
-// 	replicaUrls := []string{
-// 		"172.20.120.212:80",
-// 		"172.20.154.177:80",
-// 		"172.20.156.61:80",
-// 	}
-// 	StartCollecting(replicaUrls)
-// }
