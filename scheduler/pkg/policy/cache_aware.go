@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	// The maximum queue size threshold
+	// The maximum queue size threshold to be considered as high pressure
 	QHigh = 8
-	// The minimum queue size threshold
+	// The minimum queue size threshold to be considered as low pressure
 	QLow = 0
 	// Cache replication control interval in seconds.
 	// We control the size of the PodSet to prevent the number of replicas
