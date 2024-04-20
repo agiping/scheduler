@@ -12,11 +12,13 @@ const (
 	// The maximum queue size threshold to be considered as high pressure
 	QHigh = 8
 	// The minimum queue size threshold to be considered as low pressure
-	QLow = 0
+	QLow = 2
 	// Cache replication control interval in seconds.
 	// We control the size of the PodSet to prevent the number of replicas
 	// that hold the cache data of a single sessionID from growing too large.
 	PodSetSizeControlInterval = 120 * time.Second
+	// Perform PodSet shrinking only if the size exceeds this threshold.
+	PodSetSizeThreshold = 3
 )
 
 type Pod struct {
@@ -166,63 +168,42 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
 
 	log.Printf("minPod: %v, maxPod: %v", minPod, maxPod)
 
-	/***
-	  I. Prevention Mode: Pod is highly overloaded.
-	  If the queue size of the pod with the fewest requests exceeds twice the value of QHigh,
-	  the pod is considered to be highly overloaded.
-	  In such cases, set the RejectStateless flag to true for all pods within the pod set.
-	  This action prevents the pod from being selected for processing stateless requests.
-	  The goal is to maximize the utilization of the SessionCache data available on the pod,
-	  thereby optimizing resource allocation and performance.
-	  ***/
+	/**
+	 * Overload Prevention: Identifies high load in pods of PodSet[sessionID].
+	 * A pod is marked as 'highly overloaded' if its queue size exceeds twice the threshold QHigh.
+	 * When detected, all pods in the set activate the 'RejectStateless' flag,
+	 * preventing them from processing stateless requests.
+	 * This aims to ensure a high hit rate of the existing SessionCache data.
+	 */
 	if minPod.TgiQueueSize >= 2*QHigh {
 		for _, pod := range pods {
 			pod.RejectStateless = true
 		}
-		// do something
 	}
 
-	/***
-	  II. Replication Mode: Pod is overloaded.
-	  If the queue size of the pod with the fewest requests exceeds QHigh,
-	  the pod is considered to be overloaded.
-	  In such cases, we add a new pod into PodSet for current sessionID, which means
-	  the cache would be replicated.
-	  ***/
-	if minPod.TgiQueueSize >= QHigh && minPod.TgiQueueSize < 2*QHigh {
-		// do something
-		log.Printf("do something")
-	}
-
-	/***
-		pods, exists := podSet[input.SessionID]
-		if !exists || len(pods) == 0 {
-			selectedPod = selectLeastLoadedPod(allPods)
-			podSet[input.SessionID] = []*Pod{selectedPod}
-			lastModified[input.SessionID] = time.Now()
-		} else {
-			selectedPod = selectLeastLoadedPod(pods)
-			if checkForRebalance(selectedPod, pods) {
-				newPod := selectLeastLoadedPod(allPods)
-				podSet[input.SessionID] = append(podSet[input.SessionID], newPod)
-				selectedPod = newPod
-			}
-			shrinkIfNeeded(input.SessionID)
+	/**
+	 * Cache Replication: Handles pod overload by replicate cache on a new instance.
+	 * A pod is considered 'overloaded' if its queue size surpasses the threshold QHigh.
+	 * To manage this, the globally minimal pod is added to the PodSet for the current sessionID,
+	 * resulting in cache replication.
+	 */
+	if minPod.TgiQueueSize >= QHigh {
+		globalMinPod := findMinPod(cp.ReadyReplicas)
+		if globalMinPod.IP != minPod.IP {
+			log.Printf("Replicating cache for session %s from %v to %v",
+				sessionID,
+				cp.PodSet[sessionID],
+				globalMinPod)
+			cp.PodSet[sessionID] = append(cp.PodSet[sessionID], globalMinPod)
+			cp.LastModified[sessionID] = time.Now()
+			minPod = globalMinPod
 		}
-	    ***/
+	}
+
+	// Shrink the PodSet if needed
+	cp.ShrinkCacheReplicationIfNeeded(sessionID, maxPod)
 
 	return minPod
-}
-
-// CheckForScaleCache checks if cache is needed for replication on new pod.
-func (cp *CacheAwarePolicy) CheckForScaleCache(selectedPod *Pod, pods []*Pod) bool {
-	for _, p := range pods {
-		if p.TgiQueueSize > QHigh {
-			p.RejectStateless = true
-			return true
-		}
-	}
-	return false
 }
 
 func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
@@ -240,34 +221,23 @@ func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
 	}
 }
 
-// ShrinkCacheReplicationIfNeeded performs shrinking of the pod set if needed.
-func (cp *CacheAwarePolicy) ShrinkCacheReplicationIfNeeded(sessionID string) {
-	if time.Since(cp.LastModified[sessionID]) > PodSetSizeControlInterval && len(cp.PodSet[sessionID]) > 1 {
-		// Remove the pod with the highest number of requests
-		var maxPod *Pod
-		maxRequests := 0
-		for _, p := range cp.PodSet[sessionID] {
-			if p.NumberOfRequests > maxRequests {
-				maxRequests = p.NumberOfRequests
-				maxPod = p
+// ShrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.
+// After maxPod is removed from podSet[r.session_id], it will no longer receive requests for r.session_id in the short term.
+// Subsequent cache release is managed by the tgi LRU.
+func (cp *CacheAwarePolicy) ShrinkCacheReplicationIfNeeded(sessionID string, maxPod *Pod) {
+	if len(cp.PodSet[sessionID]) > PodSetSizeThreshold {
+		if time.Since(cp.LastModified[sessionID]) > PodSetSizeControlInterval {
+			newPodSet := []*Pod{}
+			for _, p := range cp.PodSet[sessionID] {
+				if p != maxPod {
+					newPodSet = append(newPodSet, p)
+				}
 			}
+			cp.PodSet[sessionID] = newPodSet
+			cp.LastModified[sessionID] = time.Now()
 		}
-		// Remove maxPod from podSet
-		newPodSet := []*Pod{}
-		for _, p := range cp.PodSet[sessionID] {
-			if p != maxPod {
-				newPodSet = append(newPodSet, p)
-			}
-		}
-		cp.PodSet[sessionID] = newPodSet
-		cp.LastModified[sessionID] = time.Now()
 	}
 }
-
-// func main() {
-// 	http.HandleFunc("/generate", HandleRequest)
-// 	log.Fatal(http.ListenAndServe(":80", nil))
-// }
 
 // findMinPod returns the pod with the minimum number of requests from the given list of pods.
 func findMinPod(pods []*Pod) *Pod {
