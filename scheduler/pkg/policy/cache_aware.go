@@ -130,6 +130,12 @@ func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
 func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
 	var minPod *Pod
 	// Max int
+	// TODO(Ping Zhang): The bellow code is not clear, refactor it.
+	// Finding the minPod from those that do not reject stateless requests
+	// seems equal to finding the minPod from all pods,
+	// since those pods that reject stateless requests almost always have a larger number of requests.
+	// The only difference is that the former one may have a smaller number of pods to iterate.
+	// Let's take this now as a temporary solution.
 	minRequests := int(^uint(0) >> 1)
 	for _, pod := range cp.ReadyReplicas {
 		if pod.RejectStateless {
@@ -201,7 +207,7 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
 	}
 
 	// Shrink the PodSet if needed
-	cp.ShrinkCacheReplicationIfNeeded(sessionID, maxPod)
+	cp.shrinkCacheReplicationIfNeeded(sessionID, maxPod)
 
 	return minPod
 }
@@ -221,15 +227,15 @@ func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
 	}
 }
 
-// ShrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.
+// shrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.
 // After maxPod is removed from podSet[r.session_id], it will no longer receive requests for r.session_id in the short term.
 // Subsequent cache release is managed by the tgi LRU.
-func (cp *CacheAwarePolicy) ShrinkCacheReplicationIfNeeded(sessionID string, maxPod *Pod) {
-	if len(cp.PodSet[sessionID]) > PodSetSizeThreshold {
-		if time.Since(cp.LastModified[sessionID]) > PodSetSizeControlInterval {
+func (cp *CacheAwarePolicy) shrinkCacheReplicationIfNeeded(sessionID string, maxPod *Pod) {
+	if len(cp.PodSet[sessionID]) >= PodSetSizeThreshold {
+		if time.Since(cp.LastModified[sessionID]) >= PodSetSizeControlInterval {
 			newPodSet := []*Pod{}
 			for _, p := range cp.PodSet[sessionID] {
-				if p != maxPod {
+				if p.IP != maxPod.IP {
 					newPodSet = append(newPodSet, p)
 				}
 			}
