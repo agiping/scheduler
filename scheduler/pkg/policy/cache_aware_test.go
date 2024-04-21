@@ -1,7 +1,10 @@
 package policy
 
 import (
+	"io"
+	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,6 +30,46 @@ func TestCacheAwarePolicy_SetReadyReplicas(t *testing.T) {
 
 	if !reflect.DeepEqual(expectedIPs, actualIPs) {
 		t.Errorf("Expected IPs %v, got %v", expectedIPs, actualIPs)
+	}
+}
+
+func TestCacheAwarePolicy_SelectReplica(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestBody string
+		expectedIP  string
+	}{
+		{
+			name:        "invalid request",
+			requestBody: `{"invalid_json":}`,
+			expectedIP:  "",
+		},
+		{
+			name:        "stateless request",
+			requestBody: `{}`,
+			expectedIP:  "",
+		},
+		{
+			name:        "stateful request",
+			requestBody: `{"session_id": "session1"}`,
+			expectedIP:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cp := NewCacheAwarePolicy()
+
+			request := &http.Request{
+				Body: io.NopCloser(strings.NewReader(tt.requestBody)),
+			}
+
+			ip := cp.SelectReplica(request)
+
+			if ip != tt.expectedIP {
+				t.Errorf("Expected IP to be %s, got %s", tt.expectedIP, ip)
+			}
+		})
 	}
 }
 
@@ -344,6 +387,66 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 
 			if !reflect.DeepEqual(cp.PodSet, tt.expectedPodSet) {
 				t.Errorf("Expected PodSet to be %v, got %v", tt.expectedPodSet, cp.PodSet)
+			}
+		})
+	}
+}
+
+func TestCacheAwarePolicy_UpdateAfterResponse(t *testing.T) {
+	tests := []struct {
+		name             string
+		podIP            string
+		readyReplicas    []*Pod
+		expectedReplicas []*Pod
+	}{
+		{
+			name:  "pod not found",
+			podIP: "5.5.5.5",
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+			expectedReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+		},
+		{
+			name:  "pod found, number of requests not less than QHigh",
+			podIP: "1.1.1.1",
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10, RejectStateless: true, TgiQueueSize: QHigh + 1},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+			expectedReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 9, RejectStateless: true, TgiQueueSize: QHigh + 1},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+		},
+		{
+			name:  "pod found, number of requests less than QHigh",
+			podIP: "1.1.1.1",
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10, RejectStateless: true, TgiQueueSize: QHigh - 1},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+			expectedReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 9, RejectStateless: false, TgiQueueSize: QHigh - 1},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cp := &CacheAwarePolicy{
+				ReadyReplicas: tt.readyReplicas,
+			}
+
+			cp.UpdateAfterResponse(tt.podIP)
+
+			if !reflect.DeepEqual(cp.ReadyReplicas, tt.expectedReplicas) {
+				t.Errorf("Expected ReadyReplicas to be %v, got %v", tt.expectedReplicas, cp.ReadyReplicas)
 			}
 		})
 	}

@@ -210,21 +210,6 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
 	return minPod
 }
 
-func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
-	cp.Mutex.Lock()
-	defer cp.Mutex.Unlock()
-
-	for _, pod := range cp.ReadyReplicas {
-		if pod.IP == podIP {
-			pod.NumberOfRequests--
-			if pod.RejectStateless && pod.NumberOfRequests < QHigh {
-				pod.RejectStateless = false
-			}
-			return
-		}
-	}
-}
-
 // shrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.
 // After maxPod is removed from podSet[r.session_id], it will no longer receive requests for r.session_id in the short term.
 // Subsequent cache release is managed by the tgi LRU.
@@ -239,6 +224,21 @@ func (cp *CacheAwarePolicy) shrinkCacheReplicationIfNeeded(sessionID string, max
 			}
 			cp.PodSet[sessionID] = newPodSet
 			cp.LastModified[sessionID] = time.Now()
+		}
+	}
+}
+
+func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
+	cp.Mutex.Lock()
+	defer cp.Mutex.Unlock()
+
+	for _, pod := range cp.ReadyReplicas {
+		if pod.IP == podIP {
+			pod.NumberOfRequests--
+			if pod.RejectStateless && pod.TgiQueueSize < QHigh {
+				pod.RejectStateless = false
+			}
+			return
 		}
 	}
 }
