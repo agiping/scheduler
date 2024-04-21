@@ -58,7 +58,7 @@ func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
 			delete(newReplicaMap, pod.IP)
 		} else {
 			// Handle removed pods from PodSet
-			cp.cleanPodSet(pod)
+			cp.updatePodSet(pod)
 		}
 	}
 
@@ -71,11 +71,8 @@ func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
 	cp.ReadyReplicas = updatedReplicas
 }
 
-// For those pods scaled down by autoscaler, cleanPodSet removes them from the PodSet.
-func (cp *CacheAwarePolicy) cleanPodSet(removedPod *Pod) {
-	cp.Mutex.Lock()
-	defer cp.Mutex.Unlock()
-
+// For those pods scaled down by autoscaler, updatePodSet removes them from the PodSet.
+func (cp *CacheAwarePolicy) updatePodSet(removedPod *Pod) {
 	for sessionID, pods := range cp.PodSet {
 		var updatedPods []*Pod
 		// podRemoved indicates whether the removedPod is found in the PodSet.
@@ -86,12 +83,13 @@ func (cp *CacheAwarePolicy) cleanPodSet(removedPod *Pod) {
 				updatedPods = append(updatedPods, pod)
 			} else {
 				podRemoved = true
+				break
 			}
 		}
 
 		// Only update the PodSet and LastModified if the removedPod is found.
 		if podRemoved {
-			cp.PodSet[sessionID] = updatedPods
+			cp.PodSet[sessionID] = append(updatedPods, pods[len(updatedPods)+1:]...)
 			cp.LastModified[sessionID] = time.Now()
 		}
 	}

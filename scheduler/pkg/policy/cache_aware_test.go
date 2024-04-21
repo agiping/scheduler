@@ -30,7 +30,7 @@ func TestCacheAwarePolicy_SetReadyReplicas(t *testing.T) {
 	}
 }
 
-func TestCacheAwarePolicy_cleanPodSet(t *testing.T) {
+func TestCacheAwarePolicy_updatePodSet(t *testing.T) {
 	cp := &CacheAwarePolicy{
 		PodSet: map[string][]*Pod{
 			"session1": {
@@ -50,7 +50,7 @@ func TestCacheAwarePolicy_cleanPodSet(t *testing.T) {
 
 	removedPod := &Pod{IP: "2.2.2.2"}
 
-	cp.cleanPodSet(removedPod)
+	cp.updatePodSet(removedPod)
 
 	if len(cp.PodSet["session1"]) != 1 || cp.PodSet["session1"][0].IP != "1.1.1.1" {
 		t.Errorf("Expected session1 to contain only pod 1.1.1.1, got %v", cp.PodSet["session1"])
@@ -69,7 +69,7 @@ func TestCacheAwarePolicy_cleanPodSet(t *testing.T) {
 	}
 }
 
-func TestSelectReplicaForStateless(t *testing.T) {
+func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 	tests := []struct {
 		name          string
 		readyReplicas []*Pod
@@ -126,7 +126,7 @@ func TestSelectReplicaForStateless(t *testing.T) {
 	}
 }
 
-func TestSelectReplicaForStateful(t *testing.T) {
+func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 	tests := []struct {
 		name           string
 		podSet         map[string][]*Pod
@@ -259,7 +259,7 @@ func TestSelectReplicaForStateful(t *testing.T) {
 	}
 }
 
-func TestShrinkCacheReplicationIfNeeded(t *testing.T) {
+func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 	tests := []struct {
 		name           string
 		podSet         map[string][]*Pod
@@ -349,7 +349,7 @@ func TestShrinkCacheReplicationIfNeeded(t *testing.T) {
 	}
 }
 
-func TestFindMinPod(t *testing.T) {
+func TestCacheAwarePolicy_FindMinPod(t *testing.T) {
 	pods := []*Pod{
 		{IP: "1.1.1.1", NumberOfRequests: 10},
 		{IP: "2.2.2.2", NumberOfRequests: 5},
@@ -363,7 +363,7 @@ func TestFindMinPod(t *testing.T) {
 	}
 }
 
-func TestFindMaxPod(t *testing.T) {
+func TestCacheAwarePolicy_FindMaxPod(t *testing.T) {
 	pods := []*Pod{
 		{IP: "1.1.1.1", NumberOfRequests: 10},
 		{IP: "2.2.2.2", NumberOfRequests: 5},
