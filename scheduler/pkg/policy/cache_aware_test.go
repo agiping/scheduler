@@ -126,6 +126,139 @@ func TestSelectReplicaForStateless(t *testing.T) {
 	}
 }
 
+func TestSelectReplicaForStateful(t *testing.T) {
+	tests := []struct {
+		name           string
+		podSet         map[string][]*Pod
+		readyReplicas  []*Pod
+		lastModified   map[string]time.Time
+		sessionID      string
+		expectedPodSet map[string][]*Pod
+	}{
+		{
+			name: "no existing session",
+			podSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10},
+					{IP: "2.2.2.2", NumberOfRequests: 15},
+				},
+			},
+			lastModified: map[string]time.Time{
+				"session1": time.Now(),
+			},
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10},
+				{IP: "2.2.2.2", NumberOfRequests: 15},
+				{IP: "3.3.3.3", NumberOfRequests: 5},
+				{IP: "4.4.4.4", NumberOfRequests: 20},
+			},
+			sessionID: "session2",
+			expectedPodSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10},
+					{IP: "2.2.2.2", NumberOfRequests: 15},
+				},
+				"session2": {
+					{IP: "3.3.3.3", NumberOfRequests: 5},
+				},
+			},
+		},
+		{
+			name: "existing session with no overload",
+			podSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
+				},
+			},
+			lastModified: map[string]time.Time{
+				"session1": time.Now(),
+			},
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
+				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
+				{IP: "3.3.3.3", NumberOfRequests: 5},
+				{IP: "4.4.4.4", NumberOfRequests: 20},
+			},
+			sessionID: "session1",
+			expectedPodSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
+				},
+			},
+		},
+		{
+			name: "existing session with overload",
+			podSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
+				},
+			},
+			lastModified: map[string]time.Time{
+				"session1": time.Now().Add(-2 * PodSetSizeControlInterval),
+			},
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
+				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
+				{IP: "3.3.3.3", NumberOfRequests: 5},
+				{IP: "4.4.4.4", NumberOfRequests: 20},
+			},
+			sessionID: "session1",
+			expectedPodSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
+					{IP: "3.3.3.3", NumberOfRequests: 5},
+				},
+			},
+		},
+		{
+			name: "existing session with highly overload",
+			podSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh, RejectStateless: false},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh, RejectStateless: false},
+				},
+			},
+			lastModified: map[string]time.Time{
+				"session1": time.Now().Add(-2 * PodSetSizeControlInterval),
+			},
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh},
+				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh},
+				{IP: "3.3.3.3", NumberOfRequests: 5},
+				{IP: "4.4.4.4", NumberOfRequests: 20},
+			},
+			sessionID: "session1",
+			expectedPodSet: map[string][]*Pod{
+				"session1": {
+					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh, RejectStateless: true},
+					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh, RejectStateless: true},
+					{IP: "3.3.3.3", NumberOfRequests: 5},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cp := &CacheAwarePolicy{
+				PodSet:        tt.podSet,
+				ReadyReplicas: tt.readyReplicas,
+				LastModified:  tt.lastModified,
+			}
+
+			cp.selectReplicaForStateful(tt.sessionID)
+
+			if !reflect.DeepEqual(cp.PodSet, tt.expectedPodSet) {
+				t.Errorf("Expected PodSet to be %v, got %v", tt.expectedPodSet, cp.PodSet)
+			}
+		})
+	}
+}
+
 func TestShrinkCacheReplicationIfNeeded(t *testing.T) {
 	tests := []struct {
 		name           string
