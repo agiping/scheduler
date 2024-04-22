@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/policy"
+	"scheduler/scheduler/pkg/types"
 	"scheduler/scheduler/pkg/utils"
 )
 
@@ -23,7 +25,7 @@ const (
 	// time the load balancer syncs with controller, it will update all available
 	// replica ips for each service, also send the number of requests in last query
 	// interval.
-	LBControllerSyncInterval = 5 * time.Second
+	LBControllerSyncInterval = 10 * time.Second
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 )
@@ -110,7 +112,7 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 			continue
 		}
 
-		log.Printf("Response from controller: %v\n", resp.Body())
+		log.Printf("Response from controller: %s\n", string(resp.Body()))
 		var result map[string]interface{}
 		if err := json.Unmarshal(resp.Body(), &result); err != nil {
 			log.Printf("Failed to decode response from controller: %v\n", err)
@@ -177,6 +179,15 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	path := req.URL.Path
 	var isStream bool
 	var urlWithHTTP string
+	var requestBody types.RequestBody
+
+	// Read the original body
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body: " + err.Error()})
+		return
+	}
+
 	// Omit the requests other than /generate_stream and /generate for autoscaling
 	// e.g., heatlh check, metrics, etc.
 	if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
@@ -185,7 +196,13 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	if strings.HasSuffix(path, "/generate_stream") {
 		isStream = true
 	}
-	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(req)
+
+	req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&requestBody)
 
 	if readyReplicaURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
@@ -204,7 +221,8 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	client := &http.Client{
 		Timeout: time.Second * time.Duration(TimeOutOfRequestProxying),
 	}
-	proxyReq, err := http.NewRequestWithContext(c, req.Method, targetURL, req.Body)
+	proxyReq, err := http.NewRequestWithContext(c, req.Method, targetURL, io.NopCloser(bytes.NewBuffer(bodyBytes)))
+	log.Printf("Created proxy request body: %v\n", proxyReq.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create proxy request: " + err.Error()})
 		return

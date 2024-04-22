@@ -1,11 +1,11 @@
 package policy
 
 import (
-	"encoding/json"
 	"log"
-	"net/http"
 	"sync"
 	"time"
+
+	"scheduler/scheduler/pkg/types"
 )
 
 const (
@@ -95,24 +95,24 @@ func (cp *CacheAwarePolicy) updatePodSet(removedPod *Pod) {
 	}
 }
 
-func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
+func (cp *CacheAwarePolicy) SelectReplica(requestBody *types.RequestBody) string {
 	// TODO(Ping Zhang): Abstract out the request validation logic.
-	var reqSession struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := json.NewDecoder(request.Body).Decode(&reqSession); err != nil {
-		log.Printf("Invalid request: %v", request)
+	if requestBody == nil {
+		log.Print("Invalid request body: nil")
 		return ""
 	}
 
 	var selectedPod *Pod
+	var requestType string
 	cp.PoLock.RLock()
-	if reqSession.SessionID == "" {
+	if requestBody.StructInput.SessionID == "" {
 		// Stateless request handling
+		requestType = "STATELESS"
 		selectedPod = cp.selectReplicaForStateless()
 	} else {
 		// Stateful request handling with session cache
-		selectedPod = cp.selectReplicaForStateful(reqSession.SessionID)
+		requestType = "STATEFUL"
+		selectedPod = cp.selectReplicaForStateful(requestBody.StructInput.SessionID)
 	}
 	cp.PoLock.RUnlock()
 
@@ -121,7 +121,8 @@ func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
 	}
 
 	selectedPod.NumberOfRequests++
-	log.Printf("Selected replica %s for request %v\n", selectedPod.IP, request)
+	// TODO (Ping Zhang): Only record requestsID to avoid printing sensitive information and large request body.
+	log.Printf("Selected replica %s for [%s] request %v\n", selectedPod.IP, requestType, requestBody)
 	return selectedPod.IP
 }
 
