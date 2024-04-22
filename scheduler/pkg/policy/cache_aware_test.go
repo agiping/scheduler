@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -447,6 +448,66 @@ func TestCacheAwarePolicy_UpdateAfterResponse(t *testing.T) {
 
 			if !reflect.DeepEqual(cp.ReadyReplicas, tt.expectedReplicas) {
 				t.Errorf("Expected ReadyReplicas to be %v, got %v", tt.expectedReplicas, cp.ReadyReplicas)
+			}
+		})
+	}
+}
+
+func TestUpdateTgiQueueSize(t *testing.T) {
+	tests := []struct {
+		name             string
+		tgiQ             *sync.Map
+		readyReplicas    []*Pod
+		expectedReplicas []*Pod
+	}{
+		{
+			name: "update queue size",
+			tgiQ: func() *sync.Map {
+				m := &sync.Map{}
+				m.Store("1.1.1.1", 5)
+				m.Store("2.2.2.2", 10)
+				return m
+			}(),
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", TgiQueueSize: 0},
+				{IP: "2.2.2.2", TgiQueueSize: 0},
+			},
+			expectedReplicas: []*Pod{
+				{IP: "1.1.1.1", TgiQueueSize: 5},
+				{IP: "2.2.2.2", TgiQueueSize: 10},
+			},
+		},
+		{
+			name: "no update",
+			tgiQ: func() *sync.Map {
+				m := &sync.Map{}
+				m.Store("3.3.3.3", 5)
+				m.Store("4.4.4.4", 10)
+				return m
+			}(),
+			readyReplicas: []*Pod{
+				{IP: "1.1.1.1", TgiQueueSize: 0},
+				{IP: "2.2.2.2", TgiQueueSize: 0},
+			},
+			expectedReplicas: []*Pod{
+				{IP: "1.1.1.1", TgiQueueSize: 0},
+				{IP: "2.2.2.2", TgiQueueSize: 0},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cp := &CacheAwarePolicy{
+				ReadyReplicas: tt.readyReplicas,
+			}
+
+			cp.UpdateTgiQueueSize(tt.tgiQ)
+
+			for i, pod := range cp.ReadyReplicas {
+				if pod.IP != tt.expectedReplicas[i].IP || pod.TgiQueueSize != tt.expectedReplicas[i].TgiQueueSize {
+					t.Errorf("Expected pod to be %v, got %v", tt.expectedReplicas[i], pod)
+				}
 			}
 		})
 	}

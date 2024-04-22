@@ -243,22 +243,23 @@ func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
 	}
 }
 
+// UpdateTgiQueueSize updates the TGI queue size for each pod in the ReadyReplicas,
+// where the queue size is fetched from the TGI instance by Collector.
+// TODO(Ping Zhang): Optimize the performance.
+// When QPS is high, both the read operation and write operation for pod.TgiQueueSize
+// would be at a high rate, which may lead to a performance bottleneck.
+// e.g., Consider Register & Notify mode.
 func (cp *CacheAwarePolicy) UpdateTgiQueueSize(tgiQ *sync.Map) {
 	cp.PoLock.Lock()
 	defer cp.PoLock.Unlock()
 
-	tgiQ.Range(func(key, value interface{}) bool {
-		podIP := key.(string)
-		queueSize := value.(int)
-
-		for _, pod := range cp.ReadyReplicas {
-			if pod.IP == podIP {
-				pod.TgiQueueSize = queueSize
-				return true
-			}
+	for _, pod := range cp.ReadyReplicas {
+		if queueSize, exists := tgiQ.Load(pod.IP); exists {
+			pod.TgiQueueSize = queueSize.(int)
+		} else {
+			log.Printf("Queue size of pod %s is not updated", pod.IP)
 		}
-		return true
-	})
+	}
 }
 
 // findMinPod returns the pod with the minimum number of requests from the given list of pods.
