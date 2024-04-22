@@ -110,6 +110,7 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 			continue
 		}
 
+		log.Printf("Response from controller: %v\n", resp.Body())
 		var result map[string]interface{}
 		if err := json.Unmarshal(resp.Body(), &result); err != nil {
 			log.Printf("Failed to decode response from controller: %v\n", err)
