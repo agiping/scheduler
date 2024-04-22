@@ -19,7 +19,7 @@ const (
 
 type TgiQueueSizeCollector struct {
 	Client *http.Client
-	// We use a sync.Map to store the queue size for each replica URL
+	// We use a sync.Map to store the queue size for each replica URL.
 	ReplicaQueueSize sync.Map
 }
 

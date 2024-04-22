@@ -51,7 +51,7 @@ type SkyServeLoadBalancer struct {
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
-	loadBalancingPolicy *policy.LeastNumberOfRequestsPolicy
+	loadBalancingPolicy *policy.CacheAwarePolicy
 	requestAggregator   utils.RequestsAggregator
 }
 
@@ -68,7 +68,7 @@ func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBala
 		appClient:           client,
 		controllerURL:       controllerURL,
 		loadBalancerPort:    lbPort,
-		loadBalancingPolicy: policy.NewLeastNumberOfRequestsPolicy(),
+		loadBalancingPolicy: policy.NewCacheAwarePolicy(),
 		requestAggregator:   utils.NewRequestTimestamp(),
 	}
 
@@ -152,13 +152,18 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 
 func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
 	lb.loadBalancingPolicy.PoLock.RLock()
-	readyReplicaUrls := lb.loadBalancingPolicy.ReadyReplicas
+	readyReplicas := lb.loadBalancingPolicy.ReadyReplicas
 	lb.loadBalancingPolicy.PoLock.RUnlock()
-	for i, url := range readyReplicaUrls {
-		if !startsWithHTTP(url) {
-			readyReplicaUrls[i] = "http://" + url
+
+	readyReplicaUrls := make([]string, len(readyReplicas))
+	for i, pod := range readyReplicas {
+		if !startsWithHTTP(pod.IP) {
+			readyReplicaUrls[i] = "http://" + pod.IP
+		} else {
+			readyReplicaUrls[i] = pod.IP
 		}
 	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"controller": lb.controllerURL,
 		"replicas":   readyReplicaUrls,
@@ -236,7 +241,7 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 	ticker := time.NewTicker(metrics.CollectionInterval)
 	defer ticker.Stop()
 
-	// Wait for the loadbalancer to sync with the controller
+	// Wait for the loadbalancer to sync with the controller for the first time
 	time.Sleep(10 * time.Second)
 	// Limit the number of concurrent requests
 	concurrencyControl := make(chan struct{}, metrics.MaxConcurrency)
@@ -248,9 +253,9 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 		// TODO (Ping Zhang): refactor to use a channel to update the ReadyReplicas only when its changed,
 		// by that way, we can reduce the usage of lock and improve the performance.
 		lb.loadBalancingPolicy.PoLock.RLock()
-		replicaUrls := lb.loadBalancingPolicy.ReadyReplicas
+		ReadyReplicas := lb.loadBalancingPolicy.ReadyReplicas
 		lb.loadBalancingPolicy.PoLock.RUnlock()
-		for _, url := range replicaUrls {
+		for _, replica := range ReadyReplicas {
 			wg.Add(1)
 			go func(url string) {
 				defer wg.Done()
@@ -258,10 +263,12 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 				concurrencyControl <- struct{}{}
 				if err := collector.Collect(url); err != nil {
 					fmt.Printf("Error collecting from %s: %v\n", url, err)
+				} else {
+					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaQueueSize)
 				}
 				// release the permit
 				<-concurrencyControl
-			}(url)
+			}(replica.IP)
 		}
 		// wait for all requests to finish
 		wg.Wait()

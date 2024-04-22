@@ -32,7 +32,7 @@ type CacheAwarePolicy struct {
 	ReadyReplicas []*Pod
 	PodSet        map[string][]*Pod    // key: sessionID, value: list of pods
 	LastModified  map[string]time.Time // key: sessionID, value: last modified time of PodSet
-	Mutex         sync.RWMutex
+	PoLock        sync.RWMutex
 }
 
 func NewCacheAwarePolicy() *CacheAwarePolicy {
@@ -43,8 +43,8 @@ func NewCacheAwarePolicy() *CacheAwarePolicy {
 }
 
 func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
-	cp.Mutex.Lock()
-	defer cp.Mutex.Unlock()
+	cp.PoLock.Lock()
+	defer cp.PoLock.Unlock()
 
 	newReplicaMap := make(map[string]*Pod)
 	for _, podip := range replicas {
@@ -106,7 +106,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
 	}
 
 	var selectedPod *Pod
-	cp.Mutex.RLock()
+	cp.PoLock.RLock()
 	if reqSession.SessionID == "" {
 		// Stateless request handling
 		selectedPod = cp.selectReplicaForStateless()
@@ -114,7 +114,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *http.Request) string {
 		// Stateful request handling with session cache
 		selectedPod = cp.selectReplicaForStateful(reqSession.SessionID)
 	}
-	cp.Mutex.RUnlock()
+	cp.PoLock.RUnlock()
 
 	if selectedPod == nil {
 		return ""
@@ -229,8 +229,8 @@ func (cp *CacheAwarePolicy) shrinkCacheReplicationIfNeeded(sessionID string, max
 }
 
 func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
-	cp.Mutex.Lock()
-	defer cp.Mutex.Unlock()
+	cp.PoLock.Lock()
+	defer cp.PoLock.Unlock()
 
 	for _, pod := range cp.ReadyReplicas {
 		if pod.IP == podIP {
@@ -241,6 +241,24 @@ func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
 			return
 		}
 	}
+}
+
+func (cp *CacheAwarePolicy) UpdateTgiQueueSize(tgiQ *sync.Map) {
+	cp.PoLock.Lock()
+	defer cp.PoLock.Unlock()
+
+	tgiQ.Range(func(key, value interface{}) bool {
+		podIP := key.(string)
+		queueSize := value.(int)
+
+		for _, pod := range cp.ReadyReplicas {
+			if pod.IP == podIP {
+				pod.TgiQueueSize = queueSize
+				return true
+			}
+		}
+		return true
+	})
 }
 
 // findMinPod returns the pod with the minimum number of requests from the given list of pods.
