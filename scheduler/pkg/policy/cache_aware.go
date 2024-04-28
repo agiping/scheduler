@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/types"
 )
 
@@ -255,14 +256,15 @@ func (cp *CacheAwarePolicy) UpdateTgiQueueSize(tgiQ *sync.Map) {
 	defer cp.PoLock.Unlock()
 
 	for _, pod := range cp.ReadyReplicas {
-		if queueSize, exists := tgiQ.Load(pod.IP); exists {
-			pod.TgiQueueSize = queueSize.(int)
+		if queueState, exists := tgiQ.Load(pod.IP); exists {
+			pod.TgiQueueSize = queueState.(metrics.TgiMetrics).QueueSize
 		} else {
 			log.Printf("Queue size of pod %s is not updated", pod.IP)
 		}
 	}
 }
 
+// TODO (Ping Zhang): We may need to shuffle the ReadyReplicas to avoid the same pod being selected repeatedly.
 // findMinPod returns the pod with the minimum number of requests from the given list of pods.
 func findMinPod(pods []*Pod) *Pod {
 	var minPod *Pod

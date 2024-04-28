@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-type RequestsAggregator interface {
+type MetricsAggregator interface {
 	Add(request *http.Request) // We keep the incoming request here in case we need it for advanced load balancing strategies
 	Clear()
 	ToMap() map[string]interface{}
@@ -57,4 +57,43 @@ func (rt *RequestTimestamp) String() string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return fmt.Sprintf("RequestTimestamp(timestamps=%v)", rt.timestamps)
+}
+
+type TgiQueueState struct {
+	mu           sync.Mutex
+	avgQueueSize int
+	avgQueueTime float64
+}
+
+func NewTgiQueueState() *TgiQueueState {
+	return &TgiQueueState{
+		avgQueueSize: 0,
+		avgQueueTime: 0,
+	}
+}
+
+func (tqs *TgiQueueState) Add(queueSize int, queueTime float64) {
+	tqs.mu.Lock()
+	defer tqs.mu.Unlock()
+	tqs.avgQueueSize = queueSize
+	tqs.avgQueueTime = queueTime
+}
+
+func (tqs *TgiQueueState) Clear() {
+	tqs.mu.Lock()
+	defer tqs.mu.Unlock()
+	tqs.avgQueueTime = 0
+	tqs.avgQueueSize = 0
+}
+
+func (tqs *TgiQueueState) ToMap() map[string]interface{} {
+	tqs.mu.Lock()
+	defer tqs.mu.Unlock()
+	return map[string]interface{}{"avgQueueSize": tqs.avgQueueSize, "avgQueueTime": tqs.avgQueueTime}
+}
+
+func (tqs *TgiQueueState) String() string {
+	tqs.mu.Lock()
+	defer tqs.mu.Unlock()
+	return fmt.Sprintf("TgiQueueState(avgQueueSize=%d, avgQueueTime=%f)", tqs.avgQueueSize, tqs.avgQueueTime)
 }

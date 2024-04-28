@@ -53,8 +53,9 @@ type SkyServeLoadBalancer struct {
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
+	// and metric aggregation strategy.
 	loadBalancingPolicy *policy.CacheAwarePolicy
-	requestAggregator   utils.RequestsAggregator
+	metricsAggregator   *utils.TgiQueueState
 }
 
 // Create a load balancer instance
@@ -66,12 +67,15 @@ func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBala
 	client.SetTimeout(5 * time.Second)
 
 	balancer := &SkyServeLoadBalancer{
-		appServer:           gin.Default(),
-		appClient:           client,
-		controllerURL:       controllerURL,
-		loadBalancerPort:    lbPort,
+		appServer:        gin.Default(),
+		appClient:        client,
+		controllerURL:    controllerURL,
+		loadBalancerPort: lbPort,
+		// TODO(Ping Zhang): Currently, we need to give the policy and
+		// corresponding metric aggregation strategy simultaneously.
+		// We will optimize this in the future.
 		loadBalancingPolicy: policy.NewCacheAwarePolicy(),
-		requestAggregator:   utils.NewRequestTimestamp(),
+		metricsAggregator:   utils.NewTgiQueueState(),
 	}
 
 	// "/-/urls" is a special endpoint for deploying scheduler.
@@ -102,7 +106,7 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 		resp, err := lb.appClient.R().
 			SetHeader("Content-Type", "application/json").
 			SetBody(map[string]interface{}{
-				"request_aggregator": lb.requestAggregator.ToMap(),
+				"metric_aggregator":  lb.metricsAggregator.ToMap(),
 				"controller_session": lb.controllerSession,
 			}).
 			Post(lb.controllerURL + "/controller/load_balancer_sync")
@@ -146,7 +150,7 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 
 		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
 		// Clean up after reporting request information to avoid OOM.
-		lb.requestAggregator.Clear()
+		lb.metricsAggregator.Clear()
 
 		time.Sleep(LBControllerSyncInterval)
 
@@ -191,7 +195,8 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	// Omit the requests other than /generate_stream and /generate for autoscaling
 	// e.g., heatlh check, metrics, etc.
 	if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
-		lb.requestAggregator.Add(req)
+		//lb.metricsAggregator.Add(req)
+		fmt.Println("Request body: ", string(bodyBytes))
 	}
 	if strings.HasSuffix(path, "/generate_stream") {
 		isStream = true
@@ -256,7 +261,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 
 func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 	client := &http.Client{}
-	collector := metrics.NewTgiQueueSizeCollector(client)
+	collector := metrics.NewTgiMetricCollector(client)
 	ticker := time.NewTicker(metrics.CollectionInterval)
 	defer ticker.Stop()
 
@@ -283,7 +288,7 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 				if err := collector.Collect(url); err != nil {
 					fmt.Printf("Error collecting from %s: %v\n", url, err)
 				} else {
-					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaQueueSize)
+					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaMetrics)
 				}
 				// release the permit
 				<-concurrencyControl
@@ -294,7 +299,7 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 		roundEnd := time.Now()
 		fmt.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
 		// print the queue size for each replica
-		metrics.PrintSortedQueueSizes(collector)
+		metrics.PrintSortedTgiMetric(collector)
 	}
 }
 

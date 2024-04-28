@@ -1,8 +1,8 @@
 package metrics
 
 import (
+	"bufio"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,25 +11,29 @@ import (
 )
 
 const (
-	// The interval at which to collect the queue size from each replica
+	// The interval at which to collect metrics from each replica
 	CollectionInterval = 2 * time.Second
 	// The maximum number of concurrent requests to make for metrics collection
 	MaxConcurrency = 50
 )
 
-type TgiQueueSizeCollector struct {
-	Client *http.Client
-	// We use a sync.Map to store the queue size for each replica URL.
-	ReplicaQueueSize sync.Map
+type TgiMetrics struct {
+	QueueSize int
+	QueueTime float64
 }
 
-func NewTgiQueueSizeCollector(client *http.Client) *TgiQueueSizeCollector {
-	return &TgiQueueSizeCollector{
+type TgiMetricCollector struct {
+	Client         *http.Client
+	ReplicaMetrics sync.Map // key: replica URL, value: TgiMetrics
+}
+
+func NewTgiMetricCollector(client *http.Client) *TgiMetricCollector {
+	return &TgiMetricCollector{
 		Client: client,
 	}
 }
 
-func (tqs *TgiQueueSizeCollector) Collect(replicaUrl string) error {
+func (tqs *TgiMetricCollector) Collect(replicaUrl string) error {
 	getUrl := rebuildUrls(replicaUrl)
 	resp, err := tqs.Client.Get(getUrl)
 	if err != nil {
@@ -37,34 +41,68 @@ func (tqs *TgiQueueSizeCollector) Collect(replicaUrl string) error {
 	}
 	defer resp.Body.Close()
 
-	// TODO (Ping Zhang): We may want to limit the size of data read from the response body
-	// to improve performance.
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
+	scanner := bufio.NewScanner(resp.Body)
+	var qSize int
+	var qTimeSum float64
+	var qCount int
+	var avgQueuetime float64
+	var metricCount int
 
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	for scanner.Scan() {
+		line := scanner.Text()
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "tgi_queue_size") {
-			parts := strings.Split(line, " ")
-			if len(parts) < 2 {
-				continue
-			}
-			queueSize, err := strconv.Atoi(parts[1])
-			if err != nil {
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		key, value := fields[0], fields[1]
+
+		switch {
+		case key == "tgi_queue_size":
+			if parsedInt, err := strconv.Atoi(value); err == nil {
+				qSize = parsedInt
+				metricCount++
+			} else {
 				return err
 			}
-			// update the queue size only if it has changed
-			if qsize, exist := tqs.ReplicaQueueSize.Load(replicaUrl); !exist || qsize.(int) != queueSize {
-				tqs.ReplicaQueueSize.Store(replicaUrl, queueSize)
+		case key == "tgi_request_queue_duration_sum":
+			if parsedFloat, err := strconv.ParseFloat(value, 64); err == nil {
+				qTimeSum = parsedFloat
+				metricCount++
+			} else {
+				return err
 			}
+		case key == "tgi_request_queue_duration_count":
+			if parsedInt, err := strconv.Atoi(value); err == nil {
+				qCount = parsedInt
+				metricCount++
+			} else {
+				return err
+			}
+		}
+
+		if qCount > 0 {
+			avgQueuetime = qTimeSum / float64(qCount)
+		}
+
+		if metricCount == 3 {
+			tqs.ReplicaMetrics.Store(replicaUrl, TgiMetrics{QueueSize: qSize, QueueTime: avgQueuetime})
 			break
 		}
 	}
+
+	if metricCount != 3 {
+		return fmt.Errorf("expected 3 metrics, got %d", metricCount)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -76,17 +114,17 @@ func rebuildUrls(url string) string {
 	return url + "/metrics"
 }
 
-// PrintSortedQueueSizes prints the queue size in a table format.
-func PrintSortedQueueSizes(collector *TgiQueueSizeCollector) {
+// PrintSortedTgiMetric prints the queue state in a table format.
+func PrintSortedTgiMetric(collector *TgiMetricCollector) {
 	fmt.Println()
 	var replicas []string
-	queueSizes := make(map[string]int)
+	TgiMetric := make(map[string]TgiMetrics)
 
-	collector.ReplicaQueueSize.Range(func(key, value interface{}) bool {
+	collector.ReplicaMetrics.Range(func(key, value interface{}) bool {
 		k := key.(string)
-		v := value.(int)
+		v := value.(TgiMetrics)
 		replicas = append(replicas, k)
-		queueSizes[k] = v
+		TgiMetric[k] = v
 		return true
 	})
 
@@ -94,6 +132,6 @@ func PrintSortedQueueSizes(collector *TgiQueueSizeCollector) {
 	fmt.Println(strings.Repeat("-", 60))
 
 	for _, replica := range replicas {
-		fmt.Printf("%-50s %d\n", replica, queueSizes[replica])
+		fmt.Printf("%-50s %v\n", replica, TgiMetric[replica])
 	}
 }
