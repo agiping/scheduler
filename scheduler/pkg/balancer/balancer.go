@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
 
+	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
@@ -54,12 +55,12 @@ type SkyServeLoadBalancer struct {
 	loadBalancerPort int
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
 	// and metric aggregation strategy.
-	loadBalancingPolicy *policy.CacheAwarePolicy
+	loadBalancingPolicy policy.LoadBalancingPolicy
 	metricsAggregator   *utils.TgiQueueState
 }
 
 // Create a load balancer instance
-func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBalancer {
+func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalancer {
 	// Set the gin mode to release mode
 	// uncomment to debug
 	gin.SetMode(gin.ReleaseMode)
@@ -69,13 +70,20 @@ func NewSkyServeLoadBalancer(controllerURL string, lbPort int) *SkyServeLoadBala
 	balancer := &SkyServeLoadBalancer{
 		appServer:        gin.Default(),
 		appClient:        client,
-		controllerURL:    controllerURL,
-		loadBalancerPort: lbPort,
-		// TODO(Ping Zhang): Currently, we need to give the policy and
-		// corresponding metric aggregation strategy simultaneously.
-		// We will optimize this in the future.
-		loadBalancingPolicy: policy.NewCacheAwarePolicy(),
-		metricsAggregator:   utils.NewTgiQueueState(),
+		controllerURL:    sconfig.ControllerURL,
+		loadBalancerPort: sconfig.LBPort,
+	}
+
+	// Initialize the load balancing policy
+	switch sconfig.LBPolicy {
+	case "least-number-of-requests":
+		balancer.loadBalancingPolicy = policy.NewLeastNumberOfRequestsPolicy()
+	case "round-robin":
+		balancer.loadBalancingPolicy = policy.NewRoundRobinPolicy()
+	case "cache-aware":
+		balancer.loadBalancingPolicy = policy.NewCacheAwarePolicy()
+	default:
+		log.Fatalf("Invalid load balancing policy: %s", sconfig.LBPolicy)
 	}
 
 	// "/-/urls" is a special endpoint for deploying scheduler.
@@ -158,9 +166,9 @@ func (lb *SkyServeLoadBalancer) syncWithController() {
 }
 
 func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
-	lb.loadBalancingPolicy.PoLock.RLock()
-	readyReplicas := lb.loadBalancingPolicy.ReadyReplicas
-	lb.loadBalancingPolicy.PoLock.RUnlock()
+	lb.loadBalancingPolicy.GetLock().Lock()
+	readyReplicas := lb.loadBalancingPolicy.GetReadyReplicas()
+	lb.loadBalancingPolicy.GetLock().Unlock()
 
 	readyReplicaUrls := make([]string, len(readyReplicas))
 	for i, pod := range readyReplicas {
@@ -183,7 +191,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	path := req.URL.Path
 	var isStream bool
 	var urlWithHTTP string
-	var requestBody types.RequestBody
+	var inferRequest types.InferRequest
 
 	// Read the original body
 	bodyBytes, err := io.ReadAll(req.Body)
@@ -194,20 +202,22 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 
 	// Omit the requests other than /generate_stream and /generate for autoscaling
 	// e.g., heatlh check, metrics, etc.
-	if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
-		//lb.metricsAggregator.Add(req)
-		fmt.Println("Request body: ", string(bodyBytes))
-	}
+	// if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
+	// 	if v, ok := lb.loadBalancingPolicy.(*policy.LeastNumberOfRequestsPolicy); ok {
+	// 		lb.metricsAggregator.Add(req)
+	// 	}
+	// 	fmt.Println("Request body: ", string(bodyBytes))
+	// }
 	if strings.HasSuffix(path, "/generate_stream") {
 		isStream = true
 	}
 
 	req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+	if err := json.NewDecoder(req.Body).Decode(&inferRequest.Body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
 	}
-	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&requestBody)
+	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
 
 	if readyReplicaURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
@@ -276,9 +286,9 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 		var wg sync.WaitGroup
 		// TODO (Ping Zhang): refactor to use a channel to update the ReadyReplicas only when its changed,
 		// by that way, we can reduce the usage of lock and improve the performance.
-		lb.loadBalancingPolicy.PoLock.RLock()
-		ReadyReplicas := lb.loadBalancingPolicy.ReadyReplicas
-		lb.loadBalancingPolicy.PoLock.RUnlock()
+		lb.loadBalancingPolicy.GetLock().Lock()
+		ReadyReplicas := lb.loadBalancingPolicy.GetReadyReplicas()
+		lb.loadBalancingPolicy.GetLock().Unlock()
 		for _, replica := range ReadyReplicas {
 			wg.Add(1)
 			go func(url string) {

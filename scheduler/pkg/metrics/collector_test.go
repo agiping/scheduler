@@ -47,7 +47,7 @@ tgi_request_queue_duration_count 5
 	if tgiMetrics.QueueSize != 10 {
 		t.Errorf("expected QueueSize 10, got %d", tgiMetrics.QueueSize)
 	}
-	if tgiMetrics.QueueTime != 20 {
+	if tgiMetrics.QueueTime != 20000.0000 {
 		t.Errorf("expected QueueTime 20, got %f", tgiMetrics.QueueTime)
 	}
 }

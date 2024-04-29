@@ -22,23 +22,16 @@ const (
 	PodSetSizeThreshold = 3
 )
 
-type Pod struct {
-	IP               string // IP address of the pod: ip:port
-	RejectStateless  bool   // Whether the pod rejects stateless requests
-	NumberOfRequests int    // Number of requests handled by the pod
-	TgiQueueSize     int    // The queue size of the TGI instance
-}
-
 type CacheAwarePolicy struct {
-	ReadyReplicas []*Pod
-	PodSet        map[string][]*Pod    // key: sessionID, value: list of pods
-	LastModified  map[string]time.Time // key: sessionID, value: last modified time of PodSet
+	ReadyReplicas []*types.Pod
+	PodSet        map[string][]*types.Pod // key: sessionID, value: list of pods
+	LastModified  map[string]time.Time    // key: sessionID, value: last modified time of PodSet
 	PoLock        sync.RWMutex
 }
 
 func NewCacheAwarePolicy() *CacheAwarePolicy {
 	return &CacheAwarePolicy{
-		PodSet:       make(map[string][]*Pod),
+		PodSet:       make(map[string][]*types.Pod),
 		LastModified: make(map[string]time.Time),
 	}
 }
@@ -47,12 +40,12 @@ func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
 	cp.PoLock.Lock()
 	defer cp.PoLock.Unlock()
 
-	newReplicaMap := make(map[string]*Pod)
+	newReplicaMap := make(map[string]*types.Pod)
 	for _, podip := range replicas {
-		newReplicaMap[podip] = &Pod{IP: podip}
+		newReplicaMap[podip] = &types.Pod{IP: podip}
 	}
 
-	updatedReplicas := []*Pod{}
+	updatedReplicas := []*types.Pod{}
 	for _, pod := range cp.ReadyReplicas {
 		if _, exists := newReplicaMap[pod.IP]; exists {
 			updatedReplicas = append(updatedReplicas, pod)
@@ -73,9 +66,9 @@ func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
 }
 
 // For those pods scaled down by autoscaler, updatePodSet removes them from the PodSet.
-func (cp *CacheAwarePolicy) updatePodSet(removedPod *Pod) {
+func (cp *CacheAwarePolicy) updatePodSet(removedPod *types.Pod) {
 	for sessionID, pods := range cp.PodSet {
-		var updatedPods []*Pod
+		var updatedPods []*types.Pod
 		// podRemoved indicates whether the removedPod is found in the PodSet.
 		podRemoved := false
 
@@ -96,14 +89,16 @@ func (cp *CacheAwarePolicy) updatePodSet(removedPod *Pod) {
 	}
 }
 
-func (cp *CacheAwarePolicy) SelectReplica(requestBody *types.RequestBody) string {
+func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 	// TODO(Ping Zhang): Abstract out the request validation logic.
-	if requestBody == nil {
+	if request == nil {
 		log.Print("Invalid request body: nil")
 		return ""
 	}
 
-	var selectedPod *Pod
+	requestBody := request.Body
+
+	var selectedPod *types.Pod
 	var requestType string
 	cp.PoLock.RLock()
 	if requestBody.StructInput.SessionID == "" {
@@ -127,8 +122,8 @@ func (cp *CacheAwarePolicy) SelectReplica(requestBody *types.RequestBody) string
 	return selectedPod.IP
 }
 
-func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
-	var minPod *Pod
+func (cp *CacheAwarePolicy) selectReplicaForStateless() *types.Pod {
+	var minPod *types.Pod
 	// Max int
 	// TODO(Ping Zhang): The bellow code is not clear, refactor it.
 	// Finding the minPod from those that do not reject stateless requests
@@ -158,12 +153,12 @@ func (cp *CacheAwarePolicy) selectReplicaForStateless() *Pod {
 	return minPod
 }
 
-func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
+func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *types.Pod {
 	pods, exists := cp.PodSet[sessionID]
 	if !exists || len(pods) == 0 {
 		minPod := cp.selectReplicaForStateless()
 		// Since there's no entry for this sessionID or it's empty, create or update directly
-		cp.PodSet[sessionID] = []*Pod{minPod}
+		cp.PodSet[sessionID] = []*types.Pod{minPod}
 		// Update last modified timestamp for this sessionID
 		cp.LastModified[sessionID] = time.Now()
 		return minPod
@@ -215,10 +210,10 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *Pod {
 // shrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.
 // After maxPod is removed from podSet[r.session_id], it will no longer receive requests for r.session_id in the short term.
 // Subsequent cache release is managed by the tgi LRU.
-func (cp *CacheAwarePolicy) shrinkCacheReplicationIfNeeded(sessionID string, maxPod *Pod) {
+func (cp *CacheAwarePolicy) shrinkCacheReplicationIfNeeded(sessionID string, maxPod *types.Pod) {
 	if len(cp.PodSet[sessionID]) >= PodSetSizeThreshold {
 		if time.Since(cp.LastModified[sessionID]) >= PodSetSizeControlInterval {
-			newPodSet := []*Pod{}
+			newPodSet := []*types.Pod{}
 			for _, p := range cp.PodSet[sessionID] {
 				if p.IP != maxPod.IP {
 					newPodSet = append(newPodSet, p)
@@ -266,8 +261,8 @@ func (cp *CacheAwarePolicy) UpdateTgiQueueSize(tgiQ *sync.Map) {
 
 // TODO (Ping Zhang): We may need to shuffle the ReadyReplicas to avoid the same pod being selected repeatedly.
 // findMinPod returns the pod with the minimum number of requests from the given list of pods.
-func findMinPod(pods []*Pod) *Pod {
-	var minPod *Pod
+func findMinPod(pods []*types.Pod) *types.Pod {
+	var minPod *types.Pod
 	minRequests := int(^uint(0) >> 1)
 
 	for _, pod := range pods {
@@ -280,8 +275,8 @@ func findMinPod(pods []*Pod) *Pod {
 }
 
 // findMaxPod returns the pod with the maximum number of requests from the given list of pods.
-func findMaxPod(pods []*Pod) *Pod {
-	var maxPod *Pod
+func findMaxPod(pods []*types.Pod) *types.Pod {
+	var maxPod *types.Pod
 	maxRequests := -1
 
 	for _, pod := range pods {
@@ -291,4 +286,12 @@ func findMaxPod(pods []*Pod) *Pod {
 		}
 	}
 	return maxPod
+}
+
+func (cp *CacheAwarePolicy) GetLock() sync.Locker {
+	return &cp.PoLock
+}
+
+func (cp *CacheAwarePolicy) GetReadyReplicas() []*types.Pod {
+	return cp.ReadyReplicas
 }

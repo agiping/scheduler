@@ -3,6 +3,7 @@ package metrics
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,8 +19,8 @@ const (
 )
 
 type TgiMetrics struct {
-	QueueSize int
-	QueueTime float64
+	QueueSize int     // The number of requests in the queue
+	QueueTime float64 // The average time a request spends in the queue, in milliseconds.
 }
 
 type TgiMetricCollector struct {
@@ -86,7 +87,8 @@ func (tqs *TgiMetricCollector) Collect(replicaUrl string) error {
 		}
 
 		if qCount > 0 {
-			avgQueuetime = qTimeSum / float64(qCount)
+			avgQueuetime = qTimeSum / float64(qCount) * 1000      // convert from seconds to milliseconds
+			avgQueuetime = math.Round(avgQueuetime*10000) / 10000 // round to 4 decimal places
 		}
 
 		if metricCount == 3 {
@@ -128,10 +130,11 @@ func PrintSortedTgiMetric(collector *TgiMetricCollector) {
 		return true
 	})
 
-	fmt.Printf("%-50s %s\n", "Replica URL", "Queue Size")
-	fmt.Println(strings.Repeat("-", 60))
+	fmt.Printf("%-50s %s\n", "Replica IP", "Tgi Queue State")
+	fmt.Println(strings.Repeat("-", 90))
 
 	for _, replica := range replicas {
-		fmt.Printf("%-50s %v\n", replica, TgiMetric[replica])
+		metric := TgiMetric[replica]
+		fmt.Printf("%-50s QueueSize: %d    AvgQueueTime(ms): %.4f\n", replica, metric.QueueSize, metric.QueueTime)
 	}
 }

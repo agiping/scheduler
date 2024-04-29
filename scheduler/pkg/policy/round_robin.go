@@ -1,11 +1,13 @@
 package policy
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
 	"sync"
 	"time"
+
+	"scheduler/scheduler/pkg/types"
 )
 
 // RoundRobinPolicy implements the LoadBalancingPolicy using a round-robin strategy.
@@ -36,7 +38,7 @@ func (p *RoundRobinPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the next replica in a round-robin fashion.
-func (p *RoundRobinPolicy) SelectReplica(request *http.Request) string {
+func (p *RoundRobinPolicy) SelectReplica(request *types.InferRequest) string {
 	p.PoLock.RLock()
 	defer p.PoLock.RUnlock()
 
@@ -49,4 +51,27 @@ func (p *RoundRobinPolicy) SelectReplica(request *http.Request) string {
 
 	log.Printf("Selected replica %s for request %v\n", replica, request)
 	return replica
+}
+
+func (p *RoundRobinPolicy) GetLock() sync.Locker {
+	return &p.PoLock
+}
+
+func (p *RoundRobinPolicy) GetReadyReplicas() []*types.Pod {
+	p.PoLock.RLock()
+	defer p.PoLock.RUnlock()
+
+	replicas := make([]*types.Pod, len(p.ReadyReplicas))
+	for i, replica := range p.ReadyReplicas {
+		replicas[i].IP = replica
+	}
+	return replicas
+}
+
+func (p *RoundRobinPolicy) UpdateAfterResponse(podIP string) {
+	fmt.Println("request finished on pod: ", podIP)
+}
+
+func (p *RoundRobinPolicy) UpdateTgiQueueSize(*sync.Map) {
+	fmt.Println("Not implemented yet")
 }

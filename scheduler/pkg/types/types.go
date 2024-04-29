@@ -1,5 +1,16 @@
 package types
 
+import (
+	"net/http"
+)
+
+type Pod struct {
+	IP               string // IP address of the pod: ip:port
+	RejectStateless  bool   // Whether the pod rejects stateless requests
+	NumberOfRequests int    // Number of requests handled by the pod
+	TgiQueueSize     int    // The queue size of the TGI instance
+}
+
 type SysPrompt struct {
 	ID    string `json:"id"`
 	Input string `json:"input"`
@@ -38,4 +49,9 @@ type RequestBody struct {
 	StructInput StructInput `json:"struct_input"`
 	Inputs      string      `json:"inputs"`
 	Parameters  Parameters  `json:"parameters"`
+}
+
+type InferRequest struct {
+	*http.Request
+	Body RequestBody
 }

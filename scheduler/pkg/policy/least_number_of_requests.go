@@ -1,9 +1,11 @@
 package policy
 
 import (
+	"fmt"
 	"log"
-	"net/http"
 	"sync"
+
+	"scheduler/scheduler/pkg/types"
 )
 
 // LeastNumberOfRequestsPolicy implements the LoadBalancingPolicy using the least number of requests strategy.
@@ -35,7 +37,7 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 }
 
 // SelectReplica selects the replica with the least number of connections.
-func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *http.Request) string {
+func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest) string {
 	p.PoLock.RLock()
 	defer p.PoLock.RUnlock()
 
@@ -67,4 +69,23 @@ func (p *LeastNumberOfRequestsPolicy) UpdateAfterResponse(replica string) {
 	if _, ok := p.connectionsCount[replica]; ok {
 		p.connectionsCount[replica] = max(0, p.connectionsCount[replica]-1)
 	}
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetLock() sync.Locker {
+	return &p.PoLock
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetReadyReplicas() []*types.Pod {
+	p.PoLock.RLock()
+	defer p.PoLock.RUnlock()
+
+	replicas := make([]*types.Pod, len(p.ReadyReplicas))
+	for i, replica := range p.ReadyReplicas {
+		replicas[i].IP = replica
+	}
+	return replicas
+}
+
+func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
+	fmt.Println("Not implemented yet")
 }

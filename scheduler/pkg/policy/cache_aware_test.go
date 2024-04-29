@@ -2,6 +2,7 @@ package policy
 
 import (
 	"reflect"
+	"scheduler/scheduler/pkg/types"
 	"sync"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 
 func TestCacheAwarePolicy_SetReadyReplicas(t *testing.T) {
 	cp := &CacheAwarePolicy{
-		ReadyReplicas: []*Pod{
+		ReadyReplicas: []*types.Pod{
 			{IP: "1.1.1.1"},
 			{IP: "2.2.2.2"},
 		},
@@ -73,7 +74,7 @@ func TestCacheAwarePolicy_SetReadyReplicas(t *testing.T) {
 
 func TestCacheAwarePolicy_updatePodSet(t *testing.T) {
 	cp := &CacheAwarePolicy{
-		PodSet: map[string][]*Pod{
+		PodSet: map[string][]*types.Pod{
 			"session1": {
 				{IP: "1.1.1.1"},
 				{IP: "2.2.2.2"},
@@ -89,7 +90,7 @@ func TestCacheAwarePolicy_updatePodSet(t *testing.T) {
 		},
 	}
 
-	removedPod := &Pod{IP: "2.2.2.2"}
+	removedPod := &types.Pod{IP: "2.2.2.2"}
 
 	cp.updatePodSet(removedPod)
 
@@ -113,12 +114,12 @@ func TestCacheAwarePolicy_updatePodSet(t *testing.T) {
 func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 	tests := []struct {
 		name          string
-		readyReplicas []*Pod
+		readyReplicas []*types.Pod
 		expectedIP    string
 	}{
 		{
 			name: "all pods accept stateless",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", RejectStateless: false, NumberOfRequests: 10},
 				{IP: "2.2.2.2", RejectStateless: false, NumberOfRequests: 5},
 				{IP: "3.3.3.3", RejectStateless: false, NumberOfRequests: 15},
@@ -127,7 +128,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 		},
 		{
 			name: "some pods accept stateless",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", RejectStateless: false, NumberOfRequests: 10},
 				{IP: "2.2.2.2", RejectStateless: false, NumberOfRequests: 5},
 				{IP: "3.3.3.3", RejectStateless: true, NumberOfRequests: 20},
@@ -136,7 +137,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 		},
 		{
 			name: "all pods reject stateless",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", RejectStateless: true, NumberOfRequests: 23},
 				{IP: "2.2.2.2", RejectStateless: true, NumberOfRequests: 20},
 				{IP: "3.3.3.3", RejectStateless: true, NumberOfRequests: 24},
@@ -145,7 +146,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 		},
 		{
 			name:          "no ready replicas",
-			readyReplicas: []*Pod{},
+			readyReplicas: []*types.Pod{},
 			expectedIP:    "", // Should return nil when there are no ready replicas
 		},
 	}
@@ -170,15 +171,15 @@ func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
 func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 	tests := []struct {
 		name           string
-		podSet         map[string][]*Pod
-		readyReplicas  []*Pod
+		podSet         map[string][]*types.Pod
+		readyReplicas  []*types.Pod
 		lastModified   map[string]time.Time
 		sessionID      string
-		expectedPodSet map[string][]*Pod
+		expectedPodSet map[string][]*types.Pod
 	}{
 		{
 			name: "no existing session",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10},
 					{IP: "2.2.2.2", NumberOfRequests: 15},
@@ -187,14 +188,14 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 			lastModified: map[string]time.Time{
 				"session1": time.Now(),
 			},
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 				{IP: "3.3.3.3", NumberOfRequests: 5},
 				{IP: "4.4.4.4", NumberOfRequests: 20},
 			},
 			sessionID: "session2",
-			expectedPodSet: map[string][]*Pod{
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10},
 					{IP: "2.2.2.2", NumberOfRequests: 15},
@@ -206,7 +207,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 		},
 		{
 			name: "existing session with no overload",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
@@ -215,14 +216,14 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 			lastModified: map[string]time.Time{
 				"session1": time.Now(),
 			},
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
 				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
 				{IP: "3.3.3.3", NumberOfRequests: 5},
 				{IP: "4.4.4.4", NumberOfRequests: 20},
 			},
 			sessionID: "session1",
-			expectedPodSet: map[string][]*Pod{
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 5},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 10},
@@ -231,7 +232,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 		},
 		{
 			name: "existing session with overload",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
@@ -240,14 +241,14 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 			lastModified: map[string]time.Time{
 				"session1": time.Now().Add(-2 * PodSetSizeControlInterval),
 			},
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
 				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
 				{IP: "3.3.3.3", NumberOfRequests: 5},
 				{IP: "4.4.4.4", NumberOfRequests: 20},
 			},
 			sessionID: "session1",
-			expectedPodSet: map[string][]*Pod{
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: QHigh},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: QHigh},
@@ -257,7 +258,7 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 		},
 		{
 			name: "existing session with highly overload",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh, RejectStateless: false},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh, RejectStateless: false},
@@ -266,14 +267,14 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 			lastModified: map[string]time.Time{
 				"session1": time.Now().Add(-2 * PodSetSizeControlInterval),
 			},
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh},
 				{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh},
 				{IP: "3.3.3.3", NumberOfRequests: 5},
 				{IP: "4.4.4.4", NumberOfRequests: 20},
 			},
 			sessionID: "session1",
-			expectedPodSet: map[string][]*Pod{
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1", NumberOfRequests: 10, TgiQueueSize: 2 * QHigh, RejectStateless: true},
 					{IP: "2.2.2.2", NumberOfRequests: 15, TgiQueueSize: 2 * QHigh, RejectStateless: true},
@@ -303,15 +304,15 @@ func TestCacheAwarePolicy_SelectReplicaForStateful(t *testing.T) {
 func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 	tests := []struct {
 		name           string
-		podSet         map[string][]*Pod
+		podSet         map[string][]*types.Pod
 		lastModified   map[string]time.Time
 		sessionID      string
-		maxPod         *Pod
-		expectedPodSet map[string][]*Pod
+		maxPod         *types.Pod
+		expectedPodSet map[string][]*types.Pod
 	}{
 		{
 			name: "shrink not needed: size < threshold",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "2.2.2.2"},
@@ -321,8 +322,8 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 				"session1": time.Now(),
 			},
 			sessionID: "session1",
-			maxPod:    &Pod{IP: "2.2.2.2"},
-			expectedPodSet: map[string][]*Pod{
+			maxPod:    &types.Pod{IP: "2.2.2.2"},
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "2.2.2.2"},
@@ -331,7 +332,7 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 		},
 		{
 			name: "shrink not needed: size >= threshold but time < interval",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "2.2.2.2"},
@@ -342,8 +343,8 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 				"session1": time.Now(),
 			},
 			sessionID: "session1",
-			maxPod:    &Pod{IP: "2.2.2.2"},
-			expectedPodSet: map[string][]*Pod{
+			maxPod:    &types.Pod{IP: "2.2.2.2"},
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "2.2.2.2"},
@@ -353,7 +354,7 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 		},
 		{
 			name: "shrink needed: size >= threshold and time >= interval",
-			podSet: map[string][]*Pod{
+			podSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "2.2.2.2"},
@@ -364,8 +365,8 @@ func TestCacheAwarePolicy_shrinkCacheReplicationIfNeeded(t *testing.T) {
 				"session1": time.Now().Add(-2 * PodSetSizeControlInterval),
 			},
 			sessionID: "session1",
-			maxPod:    &Pod{IP: "2.2.2.2"},
-			expectedPodSet: map[string][]*Pod{
+			maxPod:    &types.Pod{IP: "2.2.2.2"},
+			expectedPodSet: map[string][]*types.Pod{
 				"session1": {
 					{IP: "1.1.1.1"},
 					{IP: "3.3.3.3"},
@@ -394,17 +395,17 @@ func TestCacheAwarePolicy_UpdateAfterResponse(t *testing.T) {
 	tests := []struct {
 		name             string
 		podIP            string
-		readyReplicas    []*Pod
-		expectedReplicas []*Pod
+		readyReplicas    []*types.Pod
+		expectedReplicas []*types.Pod
 	}{
 		{
 			name:  "pod not found",
 			podIP: "5.5.5.5",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
-			expectedReplicas: []*Pod{
+			expectedReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
@@ -412,11 +413,11 @@ func TestCacheAwarePolicy_UpdateAfterResponse(t *testing.T) {
 		{
 			name:  "pod found, number of requests not less than QHigh",
 			podIP: "1.1.1.1",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10, RejectStateless: true, TgiQueueSize: QHigh + 1},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
-			expectedReplicas: []*Pod{
+			expectedReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 9, RejectStateless: true, TgiQueueSize: QHigh + 1},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
@@ -424,11 +425,11 @@ func TestCacheAwarePolicy_UpdateAfterResponse(t *testing.T) {
 		{
 			name:  "pod found, number of requests less than QHigh",
 			podIP: "1.1.1.1",
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 10, RejectStateless: true, TgiQueueSize: QHigh - 1},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
-			expectedReplicas: []*Pod{
+			expectedReplicas: []*types.Pod{
 				{IP: "1.1.1.1", NumberOfRequests: 9, RejectStateless: false, TgiQueueSize: QHigh - 1},
 				{IP: "2.2.2.2", NumberOfRequests: 15},
 			},
@@ -454,8 +455,8 @@ func TestUpdateTgiQueueSize(t *testing.T) {
 	tests := []struct {
 		name             string
 		tgiQ             *sync.Map
-		readyReplicas    []*Pod
-		expectedReplicas []*Pod
+		readyReplicas    []*types.Pod
+		expectedReplicas []*types.Pod
 	}{
 		{
 			name: "update queue size",
@@ -465,11 +466,11 @@ func TestUpdateTgiQueueSize(t *testing.T) {
 				m.Store("2.2.2.2", 10)
 				return m
 			}(),
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", TgiQueueSize: 0},
 				{IP: "2.2.2.2", TgiQueueSize: 0},
 			},
-			expectedReplicas: []*Pod{
+			expectedReplicas: []*types.Pod{
 				{IP: "1.1.1.1", TgiQueueSize: 5},
 				{IP: "2.2.2.2", TgiQueueSize: 10},
 			},
@@ -482,11 +483,11 @@ func TestUpdateTgiQueueSize(t *testing.T) {
 				m.Store("4.4.4.4", 10)
 				return m
 			}(),
-			readyReplicas: []*Pod{
+			readyReplicas: []*types.Pod{
 				{IP: "1.1.1.1", TgiQueueSize: 0},
 				{IP: "2.2.2.2", TgiQueueSize: 0},
 			},
-			expectedReplicas: []*Pod{
+			expectedReplicas: []*types.Pod{
 				{IP: "1.1.1.1", TgiQueueSize: 0},
 				{IP: "2.2.2.2", TgiQueueSize: 0},
 			},
@@ -511,7 +512,7 @@ func TestUpdateTgiQueueSize(t *testing.T) {
 }
 
 func TestCacheAwarePolicy_FindMinPod(t *testing.T) {
-	pods := []*Pod{
+	pods := []*types.Pod{
 		{IP: "1.1.1.1", NumberOfRequests: 10},
 		{IP: "2.2.2.2", NumberOfRequests: 5},
 		{IP: "3.3.3.3", NumberOfRequests: 20},
@@ -525,7 +526,7 @@ func TestCacheAwarePolicy_FindMinPod(t *testing.T) {
 }
 
 func TestCacheAwarePolicy_FindMaxPod(t *testing.T) {
-	pods := []*Pod{
+	pods := []*types.Pod{
 		{IP: "1.1.1.1", NumberOfRequests: 10},
 		{IP: "2.2.2.2", NumberOfRequests: 5},
 		{IP: "3.3.3.3", NumberOfRequests: 20},
