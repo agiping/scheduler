@@ -4,7 +4,6 @@ import (
 	"flag"
 	"io"
 	"log"
-	"net/url"
 	"os"
 
 	"scheduler/scheduler/pkg/balancer"
@@ -22,16 +21,9 @@ func initLog() {
 }
 
 func main() {
-	controllerAddr := flag.String("controller-addr", "http://127.0.0.1", "URL of the controller. Default: 'http://127.0.0.1'.")
 	loadBalancerPort := flag.Int("load-balancer-port", 8890, "Port on which the load balancer listens. Default: 8890.")
 	loadBalancerPolicy := flag.String("policy", "least-number-of-requests", "Load balancing policy to use. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'. Default: 'least-number-of-requests'.")
 	flag.Parse()
-
-	// Validate the controller address
-	parsedURL, err := url.Parse(*controllerAddr)
-	if err != nil || parsedURL.Scheme == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-		log.Fatal("Invalid controller address. It must be a valid URL with 'http' or 'https' scheme and include a host.")
-	}
 
 	// Validate the load balancer port
 	if *loadBalancerPort <= 0 || *loadBalancerPort > 65535 {
@@ -45,15 +37,15 @@ func main() {
 		"least-number-of-requests": true,
 		"round-robin":              true,
 	}
+
 	if !validPolicies[*loadBalancerPolicy] {
 		log.Fatal("Invalid load balancing policy. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'.")
 	}
 
 	initLog()
 	schedulerConfig := &config.SchedulerConfig{
-		ControllerURL: *controllerAddr,
-		LBPort:        *loadBalancerPort,
-		LBPolicy:      *loadBalancerPolicy,
+		LBPort:   *loadBalancerPort,
+		LBPolicy: *loadBalancerPolicy,
 	}
 
 	lb := balancer.NewSkyServeLoadBalancer(schedulerConfig)

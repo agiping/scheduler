@@ -24,4 +24,4 @@ EXPOSE 8890
 
 # run scheduler
 ENTRYPOINT ["./bcScheduler"]
-CMD ["--controller-addr=http://127.0.0.1", "--load-balancer-port=8890"]
+CMD ["--load-balancer-port=8890"]

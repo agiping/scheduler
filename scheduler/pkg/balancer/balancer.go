@@ -16,9 +16,9 @@ import (
 
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/metrics"
+	"scheduler/scheduler/pkg/podfetcher"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
-	"scheduler/scheduler/pkg/utils"
 )
 
 const (
@@ -37,26 +37,11 @@ type SkyServeLoadBalancer struct {
 	// TODO(Ping Zhang): Currently, we use gin, we will consider other high performance frameworks in case of need
 	// e.g., Beego, Iris, Echo, Fiber, etc.
 	appServer *gin.Engine
-	// app client of the load balancer, used for sending requests to SkyServe controller
-	appClient *resty.Client
-	// controllerURL: the URL of the controller
-	controllerURL string
-	/***
-	controllerSession is used to verify the controller to be the
-	same one that the load balancer is connecting to,
-	avoiding the case that the controller is restarted
-	and the load balancer connects to the new
-	controller immediately, causing the service to be
-	unavailable, although the old replicas are still
-	in service.
-	***/
-	controllerSession *string
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
 	// and metric aggregation strategy.
 	loadBalancingPolicy policy.LoadBalancingPolicy
-	metricsAggregator   *utils.TgiQueueState
 }
 
 // Create a load balancer instance
@@ -68,11 +53,8 @@ func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalan
 	client.SetTimeout(5 * time.Second)
 
 	balancer := &SkyServeLoadBalancer{
-		appServer:         gin.Default(),
-		appClient:         client,
-		controllerURL:     sconfig.ControllerURL,
-		loadBalancerPort:  sconfig.LBPort,
-		metricsAggregator: utils.NewTgiQueueState(),
+		appServer:        gin.Default(),
+		loadBalancerPort: sconfig.LBPort,
 	}
 
 	// Initialize the load balancing policy
@@ -87,103 +69,21 @@ func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalan
 		log.Fatalf("Invalid load balancing policy: %s", sconfig.LBPolicy)
 	}
 
-	// "/-/urls" is a special endpoint for deploying scheduler.
-	balancer.appServer.GET("/-/urls", balancer.getURLs)
 	balancer.appServer.Any("/generate", balancer.handleRequest)
 	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
 
 	return balancer
 }
 
-/*
-**
-
-Sync with controller periodically.
-
-Every `constants.LB_CONTROLLER_SYNC_INTERVAL_SECONDS` seconds, the
-load balancer will sync with the controller to get the latest
-information about available replicas; also, it report the request
-information to the controller, so that the controller can make
-autoscaling decisions.
-
-**
-*/
 func (lb *SkyServeLoadBalancer) syncWithController() {
 	time.Sleep(5 * time.Second) // Wait for the controller to bootstrap
 
 	for {
-		resp, err := lb.appClient.R().
-			SetHeader("Content-Type", "application/json").
-			SetBody(map[string]interface{}{
-				"metric_aggregator":  lb.metricsAggregator.ToMap(),
-				"controller_session": lb.controllerSession,
-			}).
-			Post(lb.controllerURL + "/controller/load_balancer_sync")
-
-		if err != nil {
-			log.Printf("Error occurred during sync with controller: %v\n", err)
-			continue
-		}
-
-		log.Printf("Response from controller: %s\n", string(resp.Body()))
-		var result map[string]interface{}
-		if err := json.Unmarshal(resp.Body(), &result); err != nil {
-			log.Printf("Failed to decode response from controller: %v\n", err)
-			continue
-		}
-
-		var readyReplicaUrls []string
-		// assert the type of ready_replica_urls
-		if urls, ok := result["ready_replica_urls"].([]interface{}); ok {
-			for _, url := range urls {
-				if strUrl, ok := url.(string); ok {
-					readyReplicaUrls = append(readyReplicaUrls, strUrl)
-				}
-			}
-		} else {
-			log.Printf("ready_replica_urls is expected to be []interface{}, while it is not.\n")
-			continue
-		}
-
-		controllerSession, yes := result["controller_session"].(string)
-		if !yes {
-			log.Printf("controllerSession is expected to be a string, which is not.\n")
-			continue
-		}
-
-		log.Printf("Controller session: %s\n", controllerSession)
+		readyReplicaUrls := podfetcher.PodFetcher()
 		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
-		if lb.controllerSession == nil || *lb.controllerSession != controllerSession {
-			lb.controllerSession = &controllerSession
-		}
-
 		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
-		// Clean up after reporting request information to avoid OOM.
-		lb.metricsAggregator.Clear()
-
 		time.Sleep(LBControllerSyncInterval)
-
 	}
-}
-
-func (lb *SkyServeLoadBalancer) getURLs(c *gin.Context) {
-	lb.loadBalancingPolicy.GetLock().Lock()
-	readyReplicas := lb.loadBalancingPolicy.GetReadyReplicas()
-	lb.loadBalancingPolicy.GetLock().Unlock()
-
-	readyReplicaUrls := make([]string, len(readyReplicas))
-	for i, pod := range readyReplicas {
-		if !startsWithHTTP(pod.IP) {
-			readyReplicaUrls[i] = "http://" + pod.IP
-		} else {
-			readyReplicaUrls[i] = pod.IP
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"controller": lb.controllerURL,
-		"replicas":   readyReplicaUrls,
-	})
 }
 
 // handleRequest manages incoming requests by proxying them to service replicas.
@@ -230,7 +130,8 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	} else {
 		urlWithHTTP = readyReplicaURL
 	}
-	targetURL := urlWithHTTP + path
+
+	targetURL := urlWithHTTP + ":80" + path
 
 	log.Printf("Proxying request to %s", targetURL)
 
@@ -270,7 +171,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
 }
 
-func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
+func (lb *SkyServeLoadBalancer) StartCollectingQueueSize() {
 	client := &http.Client{}
 	collector := metrics.NewTgiMetricCollector(client)
 	ticker := time.NewTicker(metrics.CollectionInterval)
@@ -316,7 +217,6 @@ func (lb *SkyServeLoadBalancer) startCollectingQueueSize() {
 
 func (lb *SkyServeLoadBalancer) Run() {
 	go lb.syncWithController()
-	go lb.startCollectingQueueSize()
 
 	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
 	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
