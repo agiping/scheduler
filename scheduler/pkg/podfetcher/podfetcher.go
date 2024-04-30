@@ -7,23 +7,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 )
 
 func PodFetcher() []string {
 	namespace := "inference-service"
 	deploymentName := "chat-character-lite-online-sky"
-	testContext := "context-cluster1"
 
-	kubeconfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		clientcmd.NewDefaultClientConfigLoadingRules(),
-		&clientcmd.ConfigOverrides{CurrentContext: testContext})
-
-	config, err := kubeconfig.ClientConfig()
+	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err.Error())
 	}
-
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err.Error())
