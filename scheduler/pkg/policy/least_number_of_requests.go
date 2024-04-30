@@ -11,14 +11,14 @@ import (
 // LeastNumberOfRequestsPolicy implements the LoadBalancingPolicy using the least number of requests strategy.
 type LeastNumberOfRequestsPolicy struct {
 	ReadyReplicas    []string
-	connectionsCount map[string]int
+	connectionsCount *sync.Map
 	PoLock           sync.RWMutex // use a read-write lock to allow multiple readers.
 }
 
 // NewLeastNumberOfRequestsPolicy creates a new instance of LeastNumberOfRequestsPolicy.
 func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 	return &LeastNumberOfRequestsPolicy{
-		connectionsCount: make(map[string]int),
+		connectionsCount: new(sync.Map), // 初始化 sync.Map
 	}
 }
 
@@ -27,20 +27,24 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
-	newConnectionsCount := make(map[string]int)
+	// 创建一个新的 sync.Map 以保存更新后的连接计数
+	newConnectionsCount := &sync.Map{}
+
+	// 为新的副本列表保留或初始化连接计数
 	for _, replica := range replicas {
-		newConnectionsCount[replica] = p.connectionsCount[replica] // retain existing count or default to 0
+		if val, ok := p.connectionsCount.Load(replica); ok {
+			newConnectionsCount.Store(replica, val) // 保留现有的计数
+		} else {
+			newConnectionsCount.Store(replica, 0) // 新副本初始化为 0
+		}
 	}
 
 	p.ReadyReplicas = replicas
-	p.connectionsCount = newConnectionsCount
+	p.connectionsCount = newConnectionsCount // 更新连接计数的 sync.Map
 }
 
 // SelectReplica selects the replica with the least number of connections.
 func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest) string {
-	p.PoLock.RLock()
-	defer p.PoLock.RUnlock()
-
 	if len(p.ReadyReplicas) == 0 {
 		log.Printf("No replicas available for request %v\n", request)
 		return ""
@@ -50,15 +54,19 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	minConnections := int(^uint(0) >> 1) // max int value
 
 	for _, replica := range p.ReadyReplicas {
-		if p.connectionsCount[replica] < minConnections {
+		connCount, _ := p.connectionsCount.Load(replica)
+		if connCount.(int) < minConnections {
 			selectedReplica = replica
-			minConnections = p.connectionsCount[replica]
+			minConnections = connCount.(int)
 		}
 	}
 
-	p.connectionsCount[selectedReplica]++
+	currentCount, _ := p.connectionsCount.LoadOrStore(selectedReplica, 0)
+	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
+
 	log.Printf("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
-	log.Printf("Number of requests: %v\n", p.connectionsCount)
+	currentMap, _ := p.connectionsCount.Load(selectedReplica)
+	log.Printf("Number of requests: %v\n", currentMap)
 	return selectedReplica
 }
 
@@ -67,8 +75,13 @@ func (p *LeastNumberOfRequestsPolicy) UpdateAfterResponse(replica string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
-	if _, ok := p.connectionsCount[replica]; ok {
-		p.connectionsCount[replica] = max(0, p.connectionsCount[replica]-1)
+	// 加载指定副本的当前连接数
+	if currentValue, ok := p.connectionsCount.Load(replica); ok {
+		// 确保连接数不会变成负数
+		newValue := max(0, currentValue.(int)-1)
+
+		// 更新连接数
+		p.connectionsCount.Store(replica, newValue)
 	}
 }
 
