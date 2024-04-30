@@ -53,5 +53,6 @@ type RequestBody struct {
 
 type InferRequest struct {
 	*http.Request
-	Body RequestBody
+	Body      RequestBody
+	RequestID string
 }

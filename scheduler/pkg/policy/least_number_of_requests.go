@@ -57,7 +57,8 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	}
 
 	p.connectionsCount[selectedReplica]++
-	log.Printf("Selected replica %s for request %v\n", selectedReplica, request)
+	log.Printf("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
+	log.Printf("Number of requests: %v\n", p.connectionsCount)
 	return selectedReplica
 }
 

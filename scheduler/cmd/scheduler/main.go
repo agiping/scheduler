@@ -21,12 +21,12 @@ func initLog() {
 }
 
 func main() {
-	loadBalancerPort := flag.Int("load-balancer-port", 8890, "Port on which the load balancer listens. Default: 8890.")
+	schedulerPort := flag.Int("load-balancer-port", 8890, "Port on which the load balancer listens. Default: 8890.")
 	loadBalancerPolicy := flag.String("policy", "least-number-of-requests", "Load balancing policy to use. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'. Default: 'least-number-of-requests'.")
 	flag.Parse()
 
 	// Validate the load balancer port
-	if *loadBalancerPort <= 0 || *loadBalancerPort > 65535 {
+	if *schedulerPort <= 0 || *schedulerPort > 65535 {
 		log.Fatal("Load balancer port must be specified and in the valid range, e.g., [1, 65535]")
 	}
 
@@ -44,10 +44,10 @@ func main() {
 
 	initLog()
 	schedulerConfig := &config.SchedulerConfig{
-		LBPort:   *loadBalancerPort,
+		LBPort:   *schedulerPort,
 		LBPolicy: *loadBalancerPolicy,
 	}
 
-	lb := balancer.NewSkyServeLoadBalancer(schedulerConfig)
+	lb := balancer.NewBaichuanScheduler(schedulerConfig)
 	lb.Run()
 }

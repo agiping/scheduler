@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+	"github.com/google/uuid"
 
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/metrics"
@@ -22,17 +23,14 @@ import (
 )
 
 const (
-	// The time interval in seconds for load balancer to sync with controller. Every
-	// time the load balancer syncs with controller, it will update all available
-	// replica ips for each service, also send the number of requests in last query
-	// interval.
-	LBControllerSyncInterval = 10 * time.Second
+	// The time interval in seconds for scheduler to sync replica info.
+	SyncReplicaInterval = 10 * time.Second
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 )
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
-type SkyServeLoadBalancer struct {
+type BaichuanScheduler struct {
 	// app server of the load balancer
 	// TODO(Ping Zhang): Currently, we use gin, we will consider other high performance frameworks in case of need
 	// e.g., Beego, Iris, Echo, Fiber, etc.
@@ -44,15 +42,15 @@ type SkyServeLoadBalancer struct {
 	loadBalancingPolicy policy.LoadBalancingPolicy
 }
 
-// Create a load balancer instance
-func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalancer {
+// Create a scheduler instance
+func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	// Set the gin mode to release mode
 	// uncomment to debug
 	gin.SetMode(gin.ReleaseMode)
 	client := resty.New()
 	client.SetTimeout(5 * time.Second)
 
-	balancer := &SkyServeLoadBalancer{
+	balancer := &BaichuanScheduler{
 		appServer:        gin.Default(),
 		loadBalancerPort: sconfig.LBPort,
 	}
@@ -75,24 +73,26 @@ func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalan
 	return balancer
 }
 
-func (lb *SkyServeLoadBalancer) syncWithController() {
+func (lb *BaichuanScheduler) syncReplicas() {
 	time.Sleep(5 * time.Second) // Wait for the controller to bootstrap
 
 	for {
 		readyReplicaUrls := podfetcher.PodFetcher()
 		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
 		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
-		time.Sleep(LBControllerSyncInterval)
+		time.Sleep(SyncReplicaInterval)
 	}
 }
 
 // handleRequest manages incoming requests by proxying them to service replicas.
-func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
+func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	req := c.Request
 	path := req.URL.Path
 	var isStream bool
 	var urlWithHTTP string
-	var inferRequest types.InferRequest
+	inferRequest := types.InferRequest{
+		RequestID: uuid.New().String(),
+	}
 
 	// Read the original body
 	bodyBytes, err := io.ReadAll(req.Body)
@@ -101,14 +101,6 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 		return
 	}
 
-	// Omit the requests other than /generate_stream and /generate for autoscaling
-	// e.g., heatlh check, metrics, etc.
-	// if strings.HasSuffix(path, "/generate_stream") || strings.HasSuffix(path, "/generate") {
-	// 	if v, ok := lb.loadBalancingPolicy.(*policy.LeastNumberOfRequestsPolicy); ok {
-	// 		lb.metricsAggregator.Add(req)
-	// 	}
-	// 	fmt.Println("Request body: ", string(bodyBytes))
-	// }
 	if strings.HasSuffix(path, "/generate_stream") {
 		isStream = true
 	}
@@ -118,10 +110,11 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
 	}
+
 	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
 
 	if readyReplicaURL == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas. Use 'sky serve status [SERVICE_NAME]' to check the replica status"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas."})
 		return
 	}
 
@@ -139,7 +132,6 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 		Timeout: time.Second * time.Duration(TimeOutOfRequestProxying),
 	}
 	proxyReq, err := http.NewRequestWithContext(c, req.Method, targetURL, io.NopCloser(bytes.NewBuffer(bodyBytes)))
-	log.Printf("Created proxy request body: %v\n", proxyReq.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create proxy request: " + err.Error()})
 		return
@@ -171,7 +163,7 @@ func (lb *SkyServeLoadBalancer) handleRequest(c *gin.Context) {
 	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
 }
 
-func (lb *SkyServeLoadBalancer) StartCollectingQueueSize() {
+func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 	client := &http.Client{}
 	collector := metrics.NewTgiMetricCollector(client)
 	ticker := time.NewTicker(metrics.CollectionInterval)
@@ -215,8 +207,8 @@ func (lb *SkyServeLoadBalancer) StartCollectingQueueSize() {
 	}
 }
 
-func (lb *SkyServeLoadBalancer) Run() {
-	go lb.syncWithController()
+func (lb *BaichuanScheduler) Run() {
+	go lb.syncReplicas()
 
 	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
 	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
