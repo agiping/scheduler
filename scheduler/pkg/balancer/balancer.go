@@ -68,10 +68,11 @@ func NewSkyServeLoadBalancer(sconfig *config.SchedulerConfig) *SkyServeLoadBalan
 	client.SetTimeout(5 * time.Second)
 
 	balancer := &SkyServeLoadBalancer{
-		appServer:        gin.Default(),
-		appClient:        client,
-		controllerURL:    sconfig.ControllerURL,
-		loadBalancerPort: sconfig.LBPort,
+		appServer:         gin.Default(),
+		appClient:         client,
+		controllerURL:     sconfig.ControllerURL,
+		loadBalancerPort:  sconfig.LBPort,
+		metricsAggregator: utils.NewTgiQueueState(),
 	}
 
 	// Initialize the load balancing policy
