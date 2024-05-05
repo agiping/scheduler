@@ -1,0 +1,126 @@
+# Baichuan Scheduler Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bc-scheduler-account
+  namespace: inference-service
+---
+# Baichuan Scheduler Role: minimal permissions.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bc-scheduler-role
+  namespace: inference-service
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get"] 
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"] 
+---
+# Baichuan Scheduler RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bc-scheduler-rolebinding
+  namespace: inference-service
+subjects:
+- kind: ServiceAccount
+  name: bc-scheduler-account
+  namespace: inference-service
+roleRef:
+  kind: Role
+  name: bc-scheduler-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Baichuan Scheduler Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bc-scheduler
+  labels:
+    app: bc-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bc-scheduler
+  template:
+    metadata:
+      labels:
+        app: bc-scheduler
+    spec:
+      serviceAccountName: bc-scheduler-account
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - bc-scheduler
+                topologyKey: kubernetes.io/hostname
+      imagePullSecrets:
+          - name: baichuan-inference-service
+      containers:
+      - name: bc-scheduler
+        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler004
+        imagePullPolicy: IfNotPresent
+        command: ["./bcScheduler"]
+        args: ["--load-balancer-port=8890"]
+        ports:
+        - containerPort: 8890
+        readinessProbe:
+          tcpSocket:
+            port: 8890
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+# Baichuan Scheduler Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bc-scheduler
+  labels:
+    app: bc-scheduler
+spec:
+  selector:
+    app: bc-scheduler
+  ports:
+  - protocol: TCP
+    port: 8890
+    targetPort: 8890
+  type: ClusterIP
+---
+# Baichuan Scheduler Ingress.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bc-scheduler
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: chat-bc-scheduler.test.ppio.bc-inner.com
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: bc-scheduler
+            port:
+              number: 8890
+  - host: chat-bc-scheduler.test.inference.proxy.bc-inner.com
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: bc-scheduler
+            port:
+              number: 8890
