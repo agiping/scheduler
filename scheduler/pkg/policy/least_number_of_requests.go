@@ -17,7 +17,7 @@ type LeastNumberOfRequestsPolicy struct {
 // NewLeastNumberOfRequestsPolicy creates a new instance of LeastNumberOfRequestsPolicy.
 func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 	return &LeastNumberOfRequestsPolicy{
-		connectionsCount: new(sync.Map), // 初始化 sync.Map
+		connectionsCount: new(sync.Map), // initialize sync.Map
 	}
 }
 
@@ -26,20 +26,18 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
-	// 创建一个新的 sync.Map 以保存更新后的连接计数
 	newConnectionsCount := &sync.Map{}
 
-	// 为新的副本列表保留或初始化连接计数
 	for _, replica := range replicas {
 		if val, ok := p.connectionsCount.Load(replica); ok {
-			newConnectionsCount.Store(replica, val) // 保留现有的计数
+			newConnectionsCount.Store(replica, val) // Keep the existing connection count
 		} else {
-			newConnectionsCount.Store(replica, 0) // 新副本初始化为 0
+			newConnectionsCount.Store(replica, 0) // Initialize the connection count to 0
 		}
 	}
 
 	p.ReadyReplicas = replicas
-	p.connectionsCount = newConnectionsCount // 更新连接计数的 sync.Map
+	p.connectionsCount = newConnectionsCount
 }
 
 // SelectReplica selects the replica with the least number of connections.
@@ -73,12 +71,10 @@ func (p *LeastNumberOfRequestsPolicy) UpdateAfterResponse(replica string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
-	// 加载指定副本的当前连接数
 	if currentValue, ok := p.connectionsCount.Load(replica); ok {
-		// 确保连接数不会变成负数
+		// make sure the value is not negative
 		newValue := max(0, currentValue.(int)-1)
 
-		// 更新连接数
 		p.connectionsCount.Store(replica, newValue)
 	}
 }
