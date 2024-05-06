@@ -193,7 +193,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 				// obtain a permit
 				concurrencyControl <- struct{}{}
 				if err := collector.Collect(url); err != nil {
-					fmt.Printf("Error collecting from %s: %v\n", url, err)
+					log.Printf("Error collecting from %s: %v\n", url, err)
 				} else {
 					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaMetrics)
 				}
@@ -204,7 +204,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 		// wait for all requests to finish
 		wg.Wait()
 		roundEnd := time.Now()
-		fmt.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
+		log.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
 		// print the queue size for each replica
 		metrics.PrintSortedTgiMetric(collector)
 	}
