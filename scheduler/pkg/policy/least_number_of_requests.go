@@ -65,7 +65,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
 
 	log.Printf("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
-	p.printNumberOfRequests()
+	p.PrintNumberOfRequests()
 	return selectedReplica
 }
 
@@ -103,9 +103,25 @@ func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
 	fmt.Println("Not implemented yet")
 }
 
-func (p *LeastNumberOfRequestsPolicy) printNumberOfRequests() {
+// For debug purposes.
+func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
+	p.PoLock.RLock()
+	defer p.PoLock.RUnlock()
+
+	requestsPerReplica := make(map[string]int)
+
 	p.connectionsCount.Range(func(key, value interface{}) bool {
-		fmt.Printf("Pod: %v, Number Of Requests: %v\n", key, value)
+		replica, ok := key.(string)
+		if !ok {
+			return true
+		}
+		count, ok := value.(int)
+		if !ok {
+			return true
+		}
+		requestsPerReplica[replica] = count
 		return true
 	})
+
+	fmt.Printf("Number of Requests per Replica: %v\n", requestsPerReplica)
 }
