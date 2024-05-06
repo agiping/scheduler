@@ -63,6 +63,12 @@ func WatchPods() {
 }
 
 func isPodReady(pod *v1.Pod) bool {
+	// if a pod is being deleted, it is not ready immediately
+	// so we remove it from the list of ready pods, preventing
+	// new requests from being sent to it.
+	if pod.ObjectMeta.DeletionTimestamp != nil {
+		return false
+	}
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
 			return true
