@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var ReadyPodIPsChan = make(chan []string)
+
 type MetricsAggregator interface {
 	Add(request *http.Request) // We keep the incoming request here in case we need it for advanced load balancing strategies
 	Clear()

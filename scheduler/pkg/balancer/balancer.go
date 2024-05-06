@@ -77,7 +77,7 @@ func (lb *BaichuanScheduler) syncReplicas() {
 	time.Sleep(5 * time.Second) // Wait for the controller to bootstrap
 
 	for {
-		readyReplicaUrls := podfetcher.PodFetcher()
+		readyReplicaUrls := podfetcher.FetchPods()
 		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
 		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
 		time.Sleep(SyncReplicaInterval)

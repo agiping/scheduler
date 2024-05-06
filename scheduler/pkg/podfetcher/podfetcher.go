@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func PodFetcher() []string {
+func FetchPods() []string {
 	namespace := "inference-service"
 	deploymentName := "chat-character-lite-online-sky"
 
