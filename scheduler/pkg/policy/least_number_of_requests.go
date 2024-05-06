@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"fmt"
 	"log"
 	"sync"
 
@@ -100,7 +99,7 @@ func (p *LeastNumberOfRequestsPolicy) GetReadyReplicas() []*types.Pod {
 }
 
 func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
-	fmt.Println("Not implemented yet")
+	log.Println("Not implemented yet")
 }
 
 // For debug purposes.
@@ -123,5 +122,5 @@ func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
 		return true
 	})
 
-	fmt.Printf("Number of Requests per Replica: %v\n", requestsPerReplica)
+	log.Printf("Number of Requests per Replica: %v\n", requestsPerReplica)
 }

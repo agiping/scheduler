@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"fmt"
 	"log"
 	"math/rand"
 	"sync"
@@ -69,9 +68,9 @@ func (p *RoundRobinPolicy) GetReadyReplicas() []*types.Pod {
 }
 
 func (p *RoundRobinPolicy) UpdateAfterResponse(podIP string) {
-	fmt.Println("request finished on pod: ", podIP)
+	log.Println("request finished on pod: ", podIP)
 }
 
 func (p *RoundRobinPolicy) UpdateTgiQueueSize(*sync.Map) {
-	fmt.Println("Not implemented yet")
+	log.Println("Not implemented yet")
 }

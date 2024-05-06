@@ -3,6 +3,7 @@ package metrics
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -118,7 +119,7 @@ func rebuildUrls(url string) string {
 
 // PrintSortedTgiMetric prints the queue state in a table format.
 func PrintSortedTgiMetric(collector *TgiMetricCollector) {
-	fmt.Println()
+	log.Println()
 	var replicas []string
 	TgiMetric := make(map[string]TgiMetrics)
 
@@ -130,11 +131,11 @@ func PrintSortedTgiMetric(collector *TgiMetricCollector) {
 		return true
 	})
 
-	fmt.Printf("%-50s %s\n", "Replica IP", "Tgi Queue State")
-	fmt.Println(strings.Repeat("-", 90))
+	log.Printf("%-50s %s\n", "Replica IP", "Tgi Queue State")
+	log.Println(strings.Repeat("-", 90))
 
 	for _, replica := range replicas {
 		metric := TgiMetric[replica]
-		fmt.Printf("%-50s QueueSize: %d    AvgQueueTime(ms): %.4f\n", replica, metric.QueueSize, metric.QueueTime)
+		log.Printf("%-50s QueueSize: %d    AvgQueueTime(ms): %.4f\n", replica, metric.QueueSize, metric.QueueTime)
 	}
 }
