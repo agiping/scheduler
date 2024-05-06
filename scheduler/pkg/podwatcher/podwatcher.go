@@ -2,7 +2,6 @@ package podwatcher
 
 import (
 	"context"
-	"log"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,10 +9,9 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-)
 
-// Global variable to store ready pod IPs
-var readyPodIPsChan = make(chan []string)
+	"scheduler/scheduler/pkg/utils"
+)
 
 func WatchPods() {
 	namespace := "inference-service"
@@ -60,7 +58,7 @@ func WatchPods() {
 		case watch.Deleted:
 			readyPodIPs = remove(readyPodIPs, pod.Status.PodIP)
 		}
-		readyPodIPsChan <- readyPodIPs
+		utils.ReadyPodIPsChan <- readyPodIPs
 	}
 }
 
@@ -89,22 +87,4 @@ func remove(slice []string, item string) []string {
 		}
 	}
 	return slice
-}
-
-func (lb *BaichuanScheduler) syncReplicas() {
-	go WatchPods()
-	for {
-		select {
-		case readyPodIPs := <-readyPodIPsChan:
-			log.Printf("Ready replicas updated: %v\n", readyPodIPs)
-			lb.loadBalancingPolicy.SetReadyReplicas(readyPodIPs)
-		}
-	}
-}
-
-func main() {
-	log.Println("Starting the scheduler...")
-	// Assuming BaichuanScheduler is correctly initialized
-	var scheduler BaichuanScheduler
-	scheduler.syncReplicas()
 }

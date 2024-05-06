@@ -17,14 +17,15 @@ import (
 
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/metrics"
-	"scheduler/scheduler/pkg/podfetcher"
+	"scheduler/scheduler/pkg/podwatcher"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 )
 
 const (
-	// The time interval in seconds for scheduler to sync replica info.
-	SyncReplicaInterval = 10 * time.Second
+	// The time interval in Millisecond for scheduler to sync replica info.
+	SyncReplicaInterval = 500 * time.Millisecond
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 )
@@ -74,13 +75,15 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 }
 
 func (lb *BaichuanScheduler) syncReplicas() {
-	time.Sleep(5 * time.Second) // Wait for the controller to bootstrap
-
+	go podwatcher.WatchPods()
 	for {
-		readyReplicaUrls := podfetcher.FetchPods()
-		log.Printf("Ready replicas: %v\n", readyReplicaUrls)
-		lb.loadBalancingPolicy.SetReadyReplicas(readyReplicaUrls)
-		time.Sleep(SyncReplicaInterval)
+		select {
+		case readyPodIPs := <-utils.ReadyPodIPsChan:
+			log.Printf("Ready replicas updated: %v\n", readyPodIPs)
+			lb.loadBalancingPolicy.SetReadyReplicas(readyPodIPs)
+		default:
+			time.Sleep(SyncReplicaInterval) // avoid busy waiting
+		}
 	}
 }
 
