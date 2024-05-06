@@ -65,7 +65,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
 
 	log.Printf("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
-	log.Printf("Number of requests: %v\n", p.connectionsCount)
+	p.printNumberOfRequests()
 	return selectedReplica
 }
 
@@ -101,4 +101,11 @@ func (p *LeastNumberOfRequestsPolicy) GetReadyReplicas() []*types.Pod {
 
 func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
 	fmt.Println("Not implemented yet")
+}
+
+func (p *LeastNumberOfRequestsPolicy) printNumberOfRequests() {
+	p.connectionsCount.Range(func(key, value interface{}) bool {
+		fmt.Printf("Pod: %v, Number Of Requests: %v\n", key, value)
+		return true
+	})
 }
