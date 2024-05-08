@@ -12,12 +12,9 @@ metadata:
   name: bc-scheduler-role
   namespace: inference-service
 rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get"] 
 - apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["list", "watch"]
+  resources:  ["endpoints"]
+  verbs: ["get", "watch", "list"]
 ---
 # Baichuan Scheduler RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1

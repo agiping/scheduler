@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 
 	"scheduler/scheduler/pkg/config"
+	"scheduler/scheduler/pkg/endpointwatcher"
 	"scheduler/scheduler/pkg/metrics"
-	"scheduler/scheduler/pkg/podwatcher"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
 	"scheduler/scheduler/pkg/utils"
@@ -75,7 +75,7 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 }
 
 func (lb *BaichuanScheduler) syncReplicas() {
-	go podwatcher.WatchPods()
+	go endpointwatcher.WatchEndpoints()
 	for {
 		select {
 		case readyPodIPs := <-utils.ReadyPodIPsChan:
