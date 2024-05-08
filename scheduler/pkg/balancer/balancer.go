@@ -78,9 +78,9 @@ func (lb *BaichuanScheduler) syncReplicas() {
 	go endpointwatcher.WatchEndpoints()
 	for {
 		select {
-		case readyPodIPs := <-utils.ReadyPodIPsChan:
-			log.Printf("Ready replicas updated: %v\n", readyPodIPs)
-			lb.loadBalancingPolicy.SetReadyReplicas(readyPodIPs)
+		case ReadyEndpoints := <-utils.ReadyEndpointsChan:
+			log.Printf("Ready replicas updated: %v\n", ReadyEndpoints)
+			lb.loadBalancingPolicy.SetReadyReplicas(ReadyEndpoints)
 		default:
 			time.Sleep(SyncReplicaInterval) // avoid busy waiting
 		}
@@ -127,7 +127,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		urlWithHTTP = readyReplicaURL
 	}
 
-	targetURL := urlWithHTTP + ":80" + path
+	targetURL := urlWithHTTP + path
 
 	log.Printf("Proxying request to %s", targetURL)
 
