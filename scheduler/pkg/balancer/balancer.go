@@ -25,7 +25,7 @@ import (
 
 const (
 	// The time interval in Millisecond for scheduler to sync replica info.
-	SyncReplicaInterval = 500 * time.Millisecond
+	SyncReplicaInterval = 100 * time.Millisecond
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 )
@@ -75,14 +75,16 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 }
 
 func (lb *BaichuanScheduler) syncReplicas() {
-	go endpointwatcher.WatchEndpoints()
+	ticker := time.NewTicker(SyncReplicaInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case ReadyEndpoints := <-utils.ReadyEndpointsChan:
 			log.Printf("Ready replicas updated: %v\n", ReadyEndpoints)
 			lb.loadBalancingPolicy.SetReadyReplicas(ReadyEndpoints)
-		default:
-			time.Sleep(SyncReplicaInterval) // avoid busy waiting
+		case <-ticker.C:
+			// just to keep the loop running
 		}
 	}
 }
@@ -211,6 +213,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 }
 
 func (lb *BaichuanScheduler) Run() {
+	go endpointwatcher.WatchEndpoints()
 	go lb.syncReplicas()
 
 	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
