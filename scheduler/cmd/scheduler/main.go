@@ -23,6 +23,8 @@ func initLog() {
 func main() {
 	schedulerPort := flag.Int("load-balancer-port", 8890, "Port on which the load balancer listens. Default: 8890.")
 	loadBalancerPolicy := flag.String("policy", "least-number-of-requests", "Load balancing policy to use. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'. Default: 'least-number-of-requests'.")
+	namespace := flag.String("namespace", "inference-service", "Namespace of the Service-Scheduler. Default: 'inference-service'.")
+	serviceName := flag.String("service-name", "chat-character-lite-online-sky", "Name of the Service. Default: 'chat-character-lite-online-sky'.")
 	flag.Parse()
 
 	// Validate the load balancer port
@@ -44,8 +46,10 @@ func main() {
 
 	initLog()
 	schedulerConfig := &config.SchedulerConfig{
-		LBPort:   *schedulerPort,
-		LBPolicy: *loadBalancerPolicy,
+		LBPort:      *schedulerPort,
+		LBPolicy:    *loadBalancerPolicy,
+		Namespace:   *namespace,
+		ServiceName: *serviceName,
 	}
 
 	lb := balancer.NewBaichuanScheduler(schedulerConfig)

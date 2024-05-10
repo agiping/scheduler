@@ -41,6 +41,7 @@ type BaichuanScheduler struct {
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
 	// and metric aggregation strategy.
 	loadBalancingPolicy policy.LoadBalancingPolicy
+	schedulerConfig     *config.SchedulerConfig
 }
 
 // Create a scheduler instance
@@ -55,6 +56,8 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 		appServer:        gin.Default(),
 		loadBalancerPort: sconfig.LBPort,
 	}
+
+	balancer.schedulerConfig = sconfig
 
 	// Initialize the load balancing policy
 	switch sconfig.LBPolicy {
@@ -213,7 +216,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 }
 
 func (lb *BaichuanScheduler) Run() {
-	go endpointwatcher.WatchEndpoints()
+	go endpointwatcher.WatchEndpoints(lb.schedulerConfig)
 	go lb.syncReplicas()
 
 	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
