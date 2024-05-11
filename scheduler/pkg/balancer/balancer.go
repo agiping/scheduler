@@ -28,6 +28,8 @@ const (
 	SyncReplicaInterval = 100 * time.Millisecond
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
+	// The maximum number of idle connections in the client pool.
+	MaxIdleConnsInClientPool = 100
 )
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
@@ -36,6 +38,7 @@ type BaichuanScheduler struct {
 	// TODO(Ping Zhang): Currently, we use gin, we will consider other high performance frameworks in case of need
 	// e.g., Beego, Iris, Echo, Fiber, etc.
 	appServer *gin.Engine
+	appClient *resty.Client
 	// the port where the load balancer listens to.
 	loadBalancerPort int
 	// TODO(Ping Zhang): We need to support configuration of load balancing policy
@@ -49,11 +52,19 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	// Set the gin mode to release mode
 	// uncomment to debug
 	gin.SetMode(gin.ReleaseMode)
+
+	// Create and configure resty client
 	client := resty.New()
-	client.SetTimeout(5 * time.Second)
+	client.SetTimeout(sconfig.TimeoutPolicy.DefaultTimeout)
+	client.SetTransport(&http.Transport{
+		MaxIdleConns:       MaxIdleConnsInClientPool,
+		IdleConnTimeout:    90 * time.Second,
+		DisableCompression: true,
+	})
 
 	balancer := &BaichuanScheduler{
 		appServer:        gin.Default(),
+		appClient:        client,
 		loadBalancerPort: sconfig.LBPort,
 	}
 
@@ -94,27 +105,22 @@ func (lb *BaichuanScheduler) syncReplicas() {
 
 // handleRequest manages incoming requests by proxying them to service replicas.
 func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
-	req := c.Request
-	path := req.URL.Path
-	var isStream bool
-	var urlWithHTTP string
 	inferRequest := types.InferRequest{
 		RequestID: uuid.New().String(),
 	}
 
 	// Read the original body
-	bodyBytes, err := io.ReadAll(req.Body)
+	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body: " + err.Error()})
 		return
 	}
 
-	if strings.HasSuffix(path, "/generate_stream") {
-		isStream = true
-	}
+	path := c.Request.URL.Path
+	isStream := strings.HasSuffix(path, "/generate_stream")
 
-	req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	if err := json.NewDecoder(req.Body).Decode(&inferRequest.Body); err != nil {
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	if err := json.NewDecoder(c.Request.Body).Decode(&inferRequest.Body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
 	}
@@ -126,6 +132,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		return
 	}
 
+	var urlWithHTTP string
 	if !startsWithHTTP(readyReplicaURL) {
 		urlWithHTTP = "http://" + readyReplicaURL
 	} else {
@@ -134,38 +141,37 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	targetURL := urlWithHTTP + path
 
+	restyRequest := lb.appClient.R().
+		SetBody(bytes.NewReader(bodyBytes)).
+		SetContext(c)
+
+	for key, values := range c.Request.Header {
+		for _, value := range values {
+			restyRequest.SetHeader(key, value)
+		}
+	}
+
 	log.Printf("Proxying request to %s", targetURL)
+	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 
-	client := &http.Client{
-		Timeout: time.Second * time.Duration(TimeOutOfRequestProxying),
-	}
-	proxyReq, err := http.NewRequestWithContext(c, req.Method, targetURL, io.NopCloser(bytes.NewBuffer(bodyBytes)))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create proxy request: " + err.Error()})
-		return
-	}
-	proxyReq.Header = req.Header.Clone()
-
-	resp, err := client.Do(proxyReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to proxy request: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
 
-	setResponseHeaders(c, resp)
+	setResponseHeaders(c, resp.RawResponse)
 
 	if isStream {
 		// Stream response directly to client
-		io.Copy(c.Writer, resp.Body)
+		io.Copy(c.Writer, resp.RawResponse.Body)
 	} else {
 		// For non-stream, read all and then send
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.RawResponse.Body)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response"})
 			return
 		}
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), body)
 	}
 	// Once finished, update the number of requests for the selected replica
 	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
