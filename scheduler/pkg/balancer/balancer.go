@@ -141,7 +141,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	targetURL := urlWithHTTP + path
 
-	log.Printf("========The body of the request is: %s\n", string(bodyBytes))
+	//SetDoNotParseResponse(true).
 	restyRequest := lb.appClient.R().
 		SetBody(bodyBytes).
 		SetContext(c)
@@ -161,10 +161,19 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	setResponseHeaders(c, resp.RawResponse)
+	//defer resp.RawResponse.Body.Close()
+
+	if resp.RawResponse.Body == nil {
+		log.Printf("============ Response body is nil")
+	}
 
 	if isStream {
 		// Stream response directly to client
-		io.Copy(c.Writer, resp.RawResponse.Body)
+		_, err := io.Copy(c.Writer, resp.RawResponse.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream proxied response"})
+			return
+		}
 	} else {
 		// For non-stream, read all and then send
 		body, err := io.ReadAll(resp.RawResponse.Body)
