@@ -143,6 +143,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	targetURL := urlWithHTTP + path
 
 	restyRequest := lb.appClient.R().
+		EnableTrace().
 		SetDoNotParseResponse(true).
 		SetBody(bodyBytes).
 		SetContext(c)
@@ -160,6 +161,22 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to proxy request: " + err.Error()})
 		return
 	}
+
+	log.Println("======================= Request Trace Info: =====================")
+	ti := resp.Request.TraceInfo()
+	log.Println("  DNSLookup     :", ti.DNSLookup)
+	log.Println("  ConnTime      :", ti.ConnTime)
+	log.Println("  TCPConnTime   :", ti.TCPConnTime)
+	log.Println("  TLSHandshake  :", ti.TLSHandshake)
+	log.Println("  ServerTime    :", ti.ServerTime)
+	log.Println("  ResponseTime  :", ti.ResponseTime)
+	log.Println("  TotalTime     :", ti.TotalTime)
+	log.Println("  IsConnReused  :", ti.IsConnReused)
+	log.Println("  IsConnWasIdle :", ti.IsConnWasIdle)
+	log.Println("  ConnIdleTime  :", ti.ConnIdleTime)
+	log.Println("  RequestAttempt:", ti.RequestAttempt)
+	log.Println("  RemoteAddr    :", ti.RemoteAddr.String())
+	log.Println("======================== Request Trace Info: ====================")
 
 	setResponseHeaders(c, resp.RawResponse)
 	defer resp.RawResponse.Body.Close()
