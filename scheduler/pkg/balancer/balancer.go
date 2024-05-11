@@ -141,8 +141,9 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	targetURL := urlWithHTTP + path
 
+	log.Printf("========The body of the request is: %s\n", string(bodyBytes))
 	restyRequest := lb.appClient.R().
-		SetBody(bytes.NewReader(bodyBytes)).
+		SetBody(bodyBytes).
 		SetContext(c)
 
 	for key, values := range c.Request.Header {
