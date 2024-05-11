@@ -56,6 +56,7 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	// Create and configure resty client
 	client := resty.New()
 	client.SetTimeout(sconfig.TimeoutPolicy.DefaultTimeout)
+	client.SetContentLength(true)
 	client.SetTransport(&http.Transport{
 		MaxIdleConns:       MaxIdleConnsInClientPool,
 		IdleConnTimeout:    90 * time.Second,
@@ -162,10 +163,6 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	setResponseHeaders(c, resp.RawResponse)
 	//defer resp.RawResponse.Body.Close()
-
-	if resp.RawResponse.Body == nil {
-		log.Printf("============ Response body is nil")
-	}
 
 	if isStream {
 		// Stream response directly to client
