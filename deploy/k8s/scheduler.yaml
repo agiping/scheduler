@@ -109,6 +109,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "10" # in seconds
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # in seconds
     nginx.ingress.kubernetes.io/proxy-send-timeout: "60"   # in seconds
+    nginx.ingress.kubernetes.io/limit-rps: "10000"  # max request per second
+    nginx.ingress.kubernetes.io/limit-connections: "1000"  # max connections
 spec:
   ingressClassName: nginx
   rules:
