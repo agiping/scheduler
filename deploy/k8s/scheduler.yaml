@@ -105,6 +105,10 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: bc-scheduler
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10" # in seconds
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # in seconds
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"   # in seconds
 spec:
   ingressClassName: nginx
   rules:
