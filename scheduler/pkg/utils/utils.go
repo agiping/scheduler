@@ -3,6 +3,8 @@ package utils
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -99,4 +101,25 @@ func (tqs *TgiQueueState) String() string {
 	tqs.mu.Lock()
 	defer tqs.mu.Unlock()
 	return fmt.Sprintf("TgiQueueState(avgQueueSize=%d, avgQueueTime=%f)", tqs.avgQueueSize, tqs.avgQueueTime)
+}
+
+// ParseRetryStatusCodes takes a comma-separated string of HTTP status codes and returns a slice of ints.
+func ParseRetryStatusCodes(codes string) ([]int, error) {
+	// Split the string by commas
+	parts := strings.Split(codes, ",")
+	// Create a slice to hold the integers
+	result := make([]int, len(parts))
+
+	for i, part := range parts {
+		// Trim any whitespace
+		code := strings.TrimSpace(part)
+		num, err := strconv.Atoi(code)
+		if err != nil {
+			// Return the error if the conversion fails
+			return nil, err
+		}
+		result[i] = num
+	}
+
+	return result, nil
 }
