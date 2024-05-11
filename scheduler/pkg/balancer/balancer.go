@@ -142,8 +142,8 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	targetURL := urlWithHTTP + path
 
-	//SetDoNotParseResponse(true).
 	restyRequest := lb.appClient.R().
+		SetDoNotParseResponse(true).
 		SetBody(bodyBytes).
 		SetContext(c)
 
@@ -162,7 +162,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	setResponseHeaders(c, resp.RawResponse)
-	//defer resp.RawResponse.Body.Close()
+	defer resp.RawResponse.Body.Close()
 
 	if isStream {
 		// Stream response directly to client
