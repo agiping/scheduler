@@ -29,7 +29,7 @@ const (
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 	// The maximum number of idle connections in the client pool.
-	MaxIdleConnsInClientPool = 100
+	MaxIdleConnsInClientPool = 1000
 )
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
@@ -168,14 +168,14 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		// Stream response directly to client
 		_, err := io.Copy(c.Writer, resp.RawResponse.Body)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream proxied response"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream proxied response: " + err.Error()})
 			return
 		}
 	} else {
 		// For non-stream, read all and then send
 		body, err := io.ReadAll(resp.RawResponse.Body)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response: " + err.Error()})
 			return
 		}
 		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), body)

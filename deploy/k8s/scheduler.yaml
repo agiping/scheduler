@@ -65,7 +65,14 @@ spec:
           - name: baichuan-inference-service
       containers:
       - name: bc-scheduler
-        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler004
+        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.0.0
+        resources:
+          requests:
+            memory: "10Gi"
+            cpu: "5"
+          limits:
+            memory: "20Gi"
+            cpu: "10"
         imagePullPolicy: IfNotPresent
         command: ["./bcScheduler"]
         args: ["--load-balancer-port=8890"]
