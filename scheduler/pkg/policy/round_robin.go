@@ -52,6 +52,10 @@ func (p *RoundRobinPolicy) SelectReplica(request *types.InferRequest) string {
 	return replica
 }
 
+func (p *RoundRobinPolicy) SelectReplicaForRetry(request *types.InferRequest, replica string) string {
+	return "Not implemented yet"
+}
+
 func (p *RoundRobinPolicy) GetLock() sync.Locker {
 	return &p.PoLock
 }

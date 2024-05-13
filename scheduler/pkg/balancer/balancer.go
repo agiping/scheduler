@@ -2,7 +2,9 @@ package balancer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -29,7 +31,7 @@ const (
 	// Timeout for proxying requests to replicas.
 	TimeOutOfRequestProxying = 600
 	// The maximum number of idle connections in the client pool.
-	MaxIdleConnsInClientPool = 1000
+	MaxIdleConnsInClientPool = 200
 )
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
@@ -47,13 +49,7 @@ type BaichuanScheduler struct {
 	schedulerConfig     *config.SchedulerConfig
 }
 
-// Create a scheduler instance
-func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
-	// Set the gin mode to release mode
-	// uncomment to debug
-	gin.SetMode(gin.ReleaseMode)
-
-	// Create and configure resty client
+func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.SchedulerConfig) *resty.Client {
 	client := resty.New()
 	client.SetTimeout(sconfig.TimeoutPolicy.DefaultTimeout)
 	client.SetContentLength(true)
@@ -63,13 +59,63 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 		DisableCompression: true,
 	})
 
-	balancer := &BaichuanScheduler{
-		appServer:        gin.Default(),
-		appClient:        client,
-		loadBalancerPort: sconfig.LBPort,
+	// retry policy
+	if sconfig.RetryPolicy.EnableRetry {
+		client.SetRetryCount(sconfig.RetryPolicy.MaxRetryTimes)
+		client.SetRetryWaitTime(sconfig.RetryPolicy.DefaultRetryDelay)
+		client.SetRetryMaxWaitTime(sconfig.RetryPolicy.MaxRetryDelay)
+		client.AddRetryCondition(
+			func(r *resty.Response, err error) bool {
+				if r != nil {
+					for _, code := range sconfig.RetryPolicy.RetriableStatusCodes {
+						if r.StatusCode() == code {
+							return true
+						}
+					}
+				}
+				// TODO (Ping Zhang): fine-grained control of retry conditions
+				return err != nil // retry on other errors: e.g., connection error, reset, etc.
+			})
+		client.OnBeforeRequest(
+			func(c *resty.Client, req *resty.Request) error {
+				// retry only if the request is not the first attempt
+				if req.Attempt == 0 {
+					return nil
+				}
+				// redirect the request to another replica
+				originalPath, _ := req.Context().Value("originalPath").(string)
+				inferRequest, _ := req.Context().Value("inferRequest").(*types.InferRequest)
+				currentURL := req.URL
+				newURL := lbpolicy.SelectReplicaForRetry(inferRequest, currentURL)
+				if newURL == "" {
+					return errors.New("no ready replicas for retry")
+				}
+				if !startsWithHTTP(newURL) {
+					newURL = "http://" + newURL
+				}
+				req.URL = newURL + originalPath
+				log.Printf("Request is being sent to URL: %s", req.URL)
+				return nil
+			})
+	} else {
+		// we keep this to manually disbale retry
+		client.SetRetryCount(0)
 	}
 
-	balancer.schedulerConfig = sconfig
+	return client
+}
+
+// Create a scheduler instance
+func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
+	// Set the gin mode to release mode
+	// uncomment to debug
+	gin.SetMode(gin.ReleaseMode)
+
+	balancer := &BaichuanScheduler{
+		appServer:        gin.Default(),
+		loadBalancerPort: sconfig.LBPort,
+		schedulerConfig:  sconfig,
+	}
 
 	// Initialize the load balancing policy
 	switch sconfig.LBPolicy {
@@ -82,6 +128,9 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	default:
 		log.Fatalf("Invalid load balancing policy: %s", sconfig.LBPolicy)
 	}
+
+	// Create and configure resty client
+	balancer.appClient = configureRestyClient(balancer.loadBalancingPolicy, sconfig)
 
 	balancer.appServer.Any("/generate", balancer.handleRequest)
 	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
@@ -109,6 +158,10 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	inferRequest := types.InferRequest{
 		RequestID: uuid.New().String(),
 	}
+
+	// save the request context for retry
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), "inferRequest", &inferRequest))
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), "originalPath", c.Request.URL.Path))
 
 	// Read the original body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
@@ -162,6 +215,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		return
 	}
 
+	// TODO(Ping Zhang): Optimize logging with Zap or other high performance loggers
 	log.Println("======================= Request Trace Info: =====================")
 	ti := resp.Request.TraceInfo()
 	log.Println("  DNSLookup     :", ti.DNSLookup)

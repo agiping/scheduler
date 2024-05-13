@@ -122,6 +122,10 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 	return selectedPod.IP
 }
 
+func (cp *CacheAwarePolicy) SelectReplicaForRetry(request *types.InferRequest, replica string) string {
+	return "Not implemented yet"
+}
+
 func (cp *CacheAwarePolicy) selectReplicaForStateless() *types.Pod {
 	var minPod *types.Pod
 	// Max int

@@ -66,6 +66,41 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	return selectedReplica
 }
 
+func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.InferRequest, currentReplica string) string {
+	if len(p.ReadyReplicas) == 0 {
+		log.Printf("No replicas available for retry request %v\n", request)
+		return ""
+	}
+
+	var selectedReplica string
+	minConnections := int(^uint(0) >> 1) // max int value
+
+	for _, replica := range p.ReadyReplicas {
+		if replica == currentReplica {
+			continue
+		}
+		connCount, _ := p.connectionsCount.Load(replica)
+		if connCount.(int) < minConnections {
+			selectedReplica = replica
+			minConnections = connCount.(int)
+		}
+	}
+
+	// If no other replica is found for this retry, return empty
+	if selectedReplica == "" {
+		log.Printf("No other replicas available for retry request %v\n", request)
+		return ""
+	}
+
+	// Update the connection count for the selected replica
+	currentCount, _ := p.connectionsCount.LoadOrStore(selectedReplica, 0)
+	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
+
+	log.Printf("Selected replica %s for retry request %s\n", selectedReplica, request.RequestID)
+	p.PrintNumberOfRequests()
+	return selectedReplica
+}
+
 // UpdateNumberOfRequests records a connection to a replica.
 func (p *LeastNumberOfRequestsPolicy) UpdateAfterResponse(replica string) {
 	p.PoLock.Lock()
