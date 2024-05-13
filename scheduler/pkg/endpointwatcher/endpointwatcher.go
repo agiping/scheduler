@@ -3,7 +3,6 @@ package endpointwatcher
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -13,6 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"scheduler/scheduler/pkg/config"
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/utils"
 )
 
@@ -22,12 +22,12 @@ func WatchEndpoints(cfg *config.SchedulerConfig) {
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Fatal(context.Background(), "Error getting in-cluster config: %v", err)
+		logger.Log.Fatal(context.Background(), "Error getting in-cluster config: %v", err)
 		return
 	}
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Fatal(context.Background(), "Error creating clientset: %v", err)
+		logger.Log.Fatal(context.Background(), "Error creating clientset: %v", err)
 		return
 	}
 
@@ -36,12 +36,12 @@ func WatchEndpoints(cfg *config.SchedulerConfig) {
 			FieldSelector: fmt.Sprintf("metadata.name=%s", serviceName),
 		})
 		if err != nil {
-			log.Printf("Error watching endpoints: %v", err)
+			logger.Log.Errorf("Error watching endpoints: %v", err)
 			time.Sleep(time.Second * 2)
 			continue
 		}
 		processEvents(watcher)
-		log.Println("Watcher has stopped unexpectedly, restarting watcher...")
+		logger.Log.Info("Watcher has stopped unexpectedly, restarting watcher...")
 		// wait for a few seconds before restarting the watcher
 		time.Sleep(time.Second * 5)
 	}
@@ -61,10 +61,10 @@ func processEvents(watcher watch.Interface) {
 			// include: service is created; pod added, removed, or updated
 			readyEndpoints = extractReadyEndpoints(endpoints)
 		case watch.Deleted:
-			log.Printf("Endpoints %s/%s has been deleted", endpoints.Namespace, endpoints.Name)
+			logger.Log.Errorf("Endpoints %s/%s has been deleted", endpoints.Namespace, endpoints.Name)
 			readyEndpoints = []string{} // reset the list of ready endpoints if the endpoints are deleted
 		}
-		log.Printf("Sending ready endpoints: %v", readyEndpoints)
+		logger.Log.Errorf("Sending ready endpoints: %v", readyEndpoints)
 		utils.ReadyEndpointsChan <- readyEndpoints
 	}
 }

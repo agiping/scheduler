@@ -78,3 +78,7 @@ func (p *RoundRobinPolicy) UpdateAfterResponse(podIP string) {
 func (p *RoundRobinPolicy) UpdateTgiQueueSize(*sync.Map) {
 	log.Println("Not implemented yet")
 }
+
+func (p *RoundRobinPolicy) GetPolicyName() string {
+	return "RoundRobin"
+}

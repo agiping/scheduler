@@ -15,4 +15,5 @@ type LoadBalancingPolicy interface {
 	SelectReplicaForRetry(*types.InferRequest, string) string
 	UpdateAfterResponse(string)
 	UpdateTgiQueueSize(*sync.Map)
+	GetPolicyName() string
 }

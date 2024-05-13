@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/endpointwatcher"
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
@@ -79,7 +79,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 		client.OnBeforeRequest(
 			func(c *resty.Client, req *resty.Request) error {
 				// retry only if the request is not the first attempt
-				log.Printf("========== Debug: Request Attempt is: %d ==========", req.Attempt)
+				logger.Log.Debugf("Request Attempt: %d", req.Attempt)
 				if req.Attempt == 1 {
 					return nil
 				}
@@ -87,19 +87,20 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				originalPath, _ := req.Context().Value("originalPath").(string)
 				inferRequest, _ := req.Context().Value("inferRequest").(*types.InferRequest)
 				if inferRequest == nil {
-					log.Println("========== Debug: inferRequest extreacted from context is: nil ==========")
+					logger.Log.Error("inferRequest extreacted from context is: nil")
 					return errors.New("no infer request found in the context")
 				}
 				currentURL := req.URL
 				newURL := lbpolicy.SelectReplicaForRetry(inferRequest, currentURL)
 				if newURL == "" {
+					logger.Log.Warn("No ready replicas for retry")
 					return errors.New("no ready replicas for retry")
 				}
 				if !startsWithHTTP(newURL) {
 					newURL = "http://" + newURL
 				}
 				req.URL = newURL + originalPath
-				log.Printf("Request is being sent to URL: %s", req.URL)
+				logger.Log.Warnf("Request is sent to %s for retry", req.URL)
 				return nil
 			})
 	} else {
@@ -130,8 +131,6 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 		balancer.loadBalancingPolicy = policy.NewRoundRobinPolicy()
 	case "cache-aware":
 		balancer.loadBalancingPolicy = policy.NewCacheAwarePolicy()
-	default:
-		log.Fatalf("Invalid load balancing policy: %s", sconfig.LBPolicy)
 	}
 
 	// Create and configure resty client
@@ -150,7 +149,7 @@ func (lb *BaichuanScheduler) syncReplicas() {
 	for {
 		select {
 		case ReadyEndpoints := <-utils.ReadyEndpointsChan:
-			log.Printf("Ready replicas updated: %v\n", ReadyEndpoints)
+			logger.Log.Infof("Ready replicas updated: %v", ReadyEndpoints)
 			lb.loadBalancingPolicy.SetReadyReplicas(ReadyEndpoints)
 		case <-ticker.C:
 			// just to keep the loop running
@@ -171,6 +170,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	// Read the original body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
+		logger.Log.Error("Failed to read request body: ", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body: " + err.Error()})
 		return
 	}
@@ -212,7 +212,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		}
 	}
 
-	log.Printf("Proxying request to %s", targetURL)
+	logger.Log.Infof("Proxying request to %s", targetURL)
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 
 	if err != nil {
@@ -221,21 +221,21 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	// TODO(Ping Zhang): Optimize logging with Zap or other high performance loggers
-	log.Println("======================= Request Trace Info: =====================")
+	logger.Log.Debug("======================= Request Trace Info: =====================")
 	ti := resp.Request.TraceInfo()
-	log.Println("  DNSLookup     :", ti.DNSLookup)
-	log.Println("  ConnTime      :", ti.ConnTime)
-	log.Println("  TCPConnTime   :", ti.TCPConnTime)
-	log.Println("  TLSHandshake  :", ti.TLSHandshake)
-	log.Println("  ServerTime    :", ti.ServerTime)
-	log.Println("  ResponseTime  :", ti.ResponseTime)
-	log.Println("  TotalTime     :", ti.TotalTime)
-	log.Println("  IsConnReused  :", ti.IsConnReused)
-	log.Println("  IsConnWasIdle :", ti.IsConnWasIdle)
-	log.Println("  ConnIdleTime  :", ti.ConnIdleTime)
-	log.Println("  RequestAttempt:", ti.RequestAttempt)
-	log.Println("  RemoteAddr    :", ti.RemoteAddr.String())
-	log.Println("======================== Request Trace Info: ====================")
+	logger.Log.Debug("  DNSLookup     :", ti.DNSLookup)
+	logger.Log.Debug("  ConnTime      :", ti.ConnTime)
+	logger.Log.Debug("  TCPConnTime   :", ti.TCPConnTime)
+	logger.Log.Debug("  TLSHandshake  :", ti.TLSHandshake)
+	logger.Log.Debug("  ServerTime    :", ti.ServerTime)
+	logger.Log.Debug("  ResponseTime  :", ti.ResponseTime)
+	logger.Log.Debug("  TotalTime     :", ti.TotalTime)
+	logger.Log.Debug("  IsConnReused  :", ti.IsConnReused)
+	logger.Log.Debug("  IsConnWasIdle :", ti.IsConnWasIdle)
+	logger.Log.Debug("  ConnIdleTime  :", ti.ConnIdleTime)
+	logger.Log.Debug("  RequestAttempt:", ti.RequestAttempt)
+	logger.Log.Debug("  RemoteAddr    :", ti.RemoteAddr.String())
+	logger.Log.Debug("======================== Request Trace Info: ====================")
 
 	setResponseHeaders(c, resp.RawResponse)
 	defer resp.RawResponse.Body.Close()
@@ -287,7 +287,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 				// obtain a permit
 				concurrencyControl <- struct{}{}
 				if err := collector.Collect(url); err != nil {
-					log.Printf("Error collecting from %s: %v\n", url, err)
+					logger.Log.Errorf("Error collecting from %s: %v\n", url, err)
 				} else {
 					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaMetrics)
 				}
@@ -298,7 +298,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 		// wait for all requests to finish
 		wg.Wait()
 		roundEnd := time.Now()
-		log.Printf("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
+		logger.Log.Infof("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
 		// print the queue size for each replica
 		metrics.PrintSortedTgiMetric(collector)
 	}
@@ -308,7 +308,8 @@ func (lb *BaichuanScheduler) Run() {
 	go endpointwatcher.WatchEndpoints(lb.schedulerConfig)
 	go lb.syncReplicas()
 
-	log.Printf("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
+	logger.Log.Infof("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
+	logger.Log.Infof("Baichuan scheduler is using %s load balancing policy", lb.schedulerConfig.LBPolicy)
 	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
 }
 

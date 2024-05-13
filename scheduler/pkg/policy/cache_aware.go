@@ -299,3 +299,7 @@ func (cp *CacheAwarePolicy) GetLock() sync.Locker {
 func (cp *CacheAwarePolicy) GetReadyReplicas() []*types.Pod {
 	return cp.ReadyReplicas
 }
+
+func (cp *CacheAwarePolicy) GetPolicyName() string {
+	return "CacheAwarePolicy"
+}

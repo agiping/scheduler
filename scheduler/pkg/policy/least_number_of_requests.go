@@ -1,9 +1,9 @@
 package policy
 
 import (
-	"log"
 	"sync"
 
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
 )
 
@@ -43,7 +43,7 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 // SelectReplica selects the replica with the least number of connections.
 func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest) string {
 	if len(p.ReadyReplicas) == 0 {
-		log.Printf("No replicas available for request %v\n", request)
+		logger.Log.Warnf("No replicas available for request %v\n", request)
 		return ""
 	}
 
@@ -61,14 +61,14 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	currentCount, _ := p.connectionsCount.LoadOrStore(selectedReplica, 0)
 	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
 
-	log.Printf("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
+	logger.Log.Infof("Selected replica %s for request %s\n", selectedReplica, request.RequestID)
 	p.PrintNumberOfRequests()
 	return selectedReplica
 }
 
 func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.InferRequest, currentReplica string) string {
 	if len(p.ReadyReplicas) == 0 {
-		log.Printf("No replicas available for retry request %v\n", request)
+		logger.Log.Warnf("No replicas available for retry request %v\n", request)
 		return ""
 	}
 
@@ -88,7 +88,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.Infer
 
 	// If no other replica is found for this retry, return empty
 	if selectedReplica == "" {
-		log.Printf("No other replicas available for retry request %v\n", request)
+		logger.Log.Warnf("No other replicas available for retry request %v\n", request)
 		return ""
 	}
 
@@ -96,7 +96,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.Infer
 	currentCount, _ := p.connectionsCount.LoadOrStore(selectedReplica, 0)
 	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
 
-	log.Printf("Selected replica %s for retry request %s\n", selectedReplica, request.RequestID)
+	logger.Log.Infof("Selected replica %s for retry request %s\n", selectedReplica, request.RequestID)
 	p.PrintNumberOfRequests()
 	return selectedReplica
 }
@@ -130,7 +130,7 @@ func (p *LeastNumberOfRequestsPolicy) GetReadyReplicas() []*types.Pod {
 }
 
 func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
-	log.Println("Not implemented yet")
+	logger.Log.Info("Not implemented yet")
 }
 
 // For debug purposes.
@@ -153,5 +153,9 @@ func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
 		return true
 	})
 
-	log.Printf("Number of Requests per Replica: %v\n", requestsPerReplica)
+	logger.Log.Infof("Number of Requests per Replica: %v\n", requestsPerReplica)
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetPolicyName() string {
+	return "LeastNumberOfRequests"
 }
