@@ -2,29 +2,17 @@ package main
 
 import (
 	"flag"
-	"io"
-	"log"
-	"os"
 	"time"
 
 	"scheduler/scheduler/pkg/balancer"
 	"scheduler/scheduler/pkg/config"
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/utils"
 )
 
-func initLog() {
-	logFile, err := os.OpenFile("baichuan-scheduler.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal("Error opening log file:", err)
-	}
-	multiWriter := io.MultiWriter(os.Stderr, logFile)
-	log.SetOutput(multiWriter)
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
-}
-
 func main() {
-	// Initialize the logger
-	initLog()
+	// log level
+	logLevel := flag.String("log-level", "info", "Log level for the logger. Options: 'info', 'debug', 'warn', 'error'. Default: 'info'.")
 
 	// namespace, serviceName
 	namespace := flag.String("namespace", "inference-service", "Namespace of the Service-Scheduler. Default: 'inference-service'.")
@@ -43,16 +31,19 @@ func main() {
 	backoffStrategy := flag.String("backoff-strategy", "exponential", "Backoff strategy to use (fixed, linear, exponential)")
 
 	// timeout policy
-	enableTimeout := flag.Bool("enable-timeout", true, "Enable or disable timeouts")
 	defaultTimeout := flag.Int("default-timeout-seconds", 600, "Default timeout for requests")
 	connectTimeout := flag.Int("connect-timeout-seconds", 10, "Timeout for establishing connections")
 
 	flag.Parse()
 
+	// Initialize the logger
+	logger.Init(*logLevel)
+
 	// Validate the load balancer port
 	if *schedulerPort <= 0 || *schedulerPort > 65535 {
-		log.Println("Load balancer port must be specified and in the valid range, e.g., [1, 65535]")
+		logger.Log.Error("Load balancer port must be specified in the valid range, e.g., [1, 65535]")
 		// fallback to default port when mis-configured
+		logger.Log.Warn("Falling back to default port 8890")
 		*schedulerPort = 8890
 	}
 
@@ -65,24 +56,25 @@ func main() {
 	}
 
 	if !validPolicies[*loadBalancerPolicy] {
-		log.Println("Invalid load balancing policy. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'.")
+		logger.Log.Error("Invalid load balancing policy. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'.")
 		// fallback to default policy when mis-confgured
+		logger.Log.Warn("Falling back to default policy 'least-number-of-requests'")
 		*loadBalancerPolicy = "least-number-of-requests"
 	}
 
 	// Parse the retry status code
 	codes := []int{}
 	codes, err := utils.ParseRetryStatusCodes(*retriableStatusCodes)
-	if err != nil {
-		log.Fatalf("Error parsing retriable status codes: %v", err)
-	}
-	if len(codes) == 0 {
-		log.Println("No valid status codes provided for retry, use defaults")
+	if err != nil || len(codes) == 0 {
+		logger.Log.Errorf("Error parsing retriable status codes: %v", err)
+		logger.Log.Warnf("Falling back to default retriable status codes: %v", config.DefaultRetryCodes)
 		codes = config.DefaultRetryCodes
 	}
-
 	if *maxRetryTimes < 0 || *maxRetryTimes > 10 {
-		log.Println("Max retry times must be in the range [0, 10]")
+		logger.Log.Error("Max retry times must be in the range [0, 10]")
+		// fallback to default max retry times when mis-configured
+		logger.Log.Warn("Falling back to default max retry times: 3")
+		*maxRetryTimes = 3
 	}
 
 	retryPolicy := &config.RetryPolicy{
@@ -95,7 +87,6 @@ func main() {
 	}
 
 	timeoutPolicy := &config.TimeoutPolicy{
-		EnableTimeout:  *enableTimeout,
 		DefaultTimeout: time.Duration(*defaultTimeout) * time.Second,
 		ConnectTimeout: time.Duration(*connectTimeout) * time.Second,
 	}
