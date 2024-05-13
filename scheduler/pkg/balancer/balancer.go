@@ -79,12 +79,17 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 		client.OnBeforeRequest(
 			func(c *resty.Client, req *resty.Request) error {
 				// retry only if the request is not the first attempt
-				if req.Attempt == 0 {
+				log.Printf("========== Debug: Request Attempt is: %d ==========", req.Attempt)
+				if req.Attempt == 1 {
 					return nil
 				}
 				// redirect the request to another replica
 				originalPath, _ := req.Context().Value("originalPath").(string)
 				inferRequest, _ := req.Context().Value("inferRequest").(*types.InferRequest)
+				if inferRequest == nil {
+					log.Println("========== Debug: inferRequest extreacted from context is: nil ==========")
+					return errors.New("no infer request found in the context")
+				}
 				currentURL := req.URL
 				newURL := lbpolicy.SelectReplicaForRetry(inferRequest, currentURL)
 				if newURL == "" {
