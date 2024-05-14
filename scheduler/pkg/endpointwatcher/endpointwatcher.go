@@ -64,7 +64,8 @@ func processEvents(watcher watch.Interface) {
 			logger.Log.Errorf("Endpoints %s/%s has been deleted", endpoints.Namespace, endpoints.Name)
 			readyEndpoints = []string{} // reset the list of ready endpoints if the endpoints are deleted
 		}
-		logger.Log.Infof("Sending ready endpoints: %v", readyEndpoints)
+		logger.Log.Debugf("Sending ready endpoints: %v", readyEndpoints)
+		logger.Log.Infof("Sending ready endpoints count: %d", len(readyEndpoints))
 		utils.ReadyEndpointsChan <- readyEndpoints
 	}
 }

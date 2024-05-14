@@ -153,7 +153,8 @@ func (lb *BaichuanScheduler) syncReplicas() {
 	for {
 		select {
 		case ReadyEndpoints := <-utils.ReadyEndpointsChan:
-			logger.Log.Infof("Ready replicas updated: %v", ReadyEndpoints)
+			logger.Log.Debugf("Received ready replicas: %v", ReadyEndpoints)
+			logger.Log.Infof("Received ready replicas count: %d", len(ReadyEndpoints))
 			lb.loadBalancingPolicy.SetReadyReplicas(ReadyEndpoints)
 		case <-ticker.C:
 			// just to keep the loop running
