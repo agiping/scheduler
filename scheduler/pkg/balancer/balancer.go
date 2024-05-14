@@ -117,8 +117,12 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	// uncomment to debug
 	gin.SetMode(gin.ReleaseMode)
 
+	// Disable Gin's default logging
+	gin.DefaultWriter = io.Discard
+	gin.DefaultErrorWriter = io.Discard
+
 	balancer := &BaichuanScheduler{
-		appServer:        gin.Default(),
+		appServer:        gin.New(),
 		loadBalancerPort: sconfig.LBPort,
 		schedulerConfig:  sconfig,
 	}
