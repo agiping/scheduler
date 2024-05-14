@@ -184,6 +184,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	if err := json.NewDecoder(c.Request.Body).Decode(&inferRequest.Body); err != nil {
+		logger.Log.Errorf("Invalid request body: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
 	}
@@ -191,6 +192,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
 
 	if readyReplicaURL == "" {
+		logger.Log.Error("No ready replicas.")
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas."})
 		return
 	}
@@ -220,11 +222,11 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 
 	if err != nil {
+		logger.Log.Errorf("Failed to proxy request, error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to proxy request: " + err.Error()})
 		return
 	}
 
-	// TODO(Ping Zhang): Optimize logging with Zap or other high performance loggers
 	logger.Log.Debug("======================= Request Trace Info: =====================")
 	ti := resp.Request.TraceInfo()
 	logger.Log.Debug("  DNSLookup     :", ti.DNSLookup)
@@ -248,17 +250,21 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		// Stream response directly to client
 		_, err := io.Copy(c.Writer, resp.RawResponse.Body)
 		if err != nil {
+			logger.Log.Errorf("Failed to stream proxied response, error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream proxied response: " + err.Error()})
 			return
 		}
+		logger.Log.Infof("Streamed response to client, statuscode: %d", resp.StatusCode())
 	} else {
 		// For non-stream, read all and then send
 		body, err := io.ReadAll(resp.RawResponse.Body)
 		if err != nil {
+			logger.Log.Errorf("Failed to read proxied non-stream response, error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response: " + err.Error()})
 			return
 		}
 		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), body)
+		logger.Log.Infof("Sent response to client, statuscode: %d", resp.StatusCode())
 	}
 	// Once finished, update the number of requests for the selected replica
 	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
