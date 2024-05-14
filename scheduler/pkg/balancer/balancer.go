@@ -84,7 +84,12 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 					return nil
 				}
 				// redirect the request to another replica
-				inferRequestID, _ := req.Context().Value("inferRequestID").(string)
+				inferRequestID, ok := req.Context().Value("inferRequestID").(string)
+				if !ok {
+					logger.Log.Error("Failed to extract inferRequestID from context in OnBeforeRequest")
+				}
+				logger.Log.Infof("The inferID is %s", inferRequestID)
+
 				if inferRequestID == "" {
 					logger.Log.Error("inferRequestID extracted from context is: empty")
 					return errors.New("no infer request found in the context")
@@ -216,6 +221,12 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	// Save request ID in the context for retry
 	restyRequest.SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID))
+	inferID, ok := restyRequest.Context().Value("inferRequestID").(string)
+	if !ok {
+		logger.Log.Error("Failed to extract inferRequestID from context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract inferRequestID from context"})
+	}
+	logger.Log.Infof("The inferID is %s", inferID)
 
 	// Copy headers
 	for key, values := range c.Request.Header {
