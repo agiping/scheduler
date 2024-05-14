@@ -95,6 +95,16 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 					return errors.New("no infer request found in the context")
 				}
 
+				if req.RawRequest == nil {
+					logger.Log.Error("req.RawRequest is nil")
+					return errors.New("req.RawRequest is nil")
+				}
+
+				if req.RawRequest.URL == nil {
+					logger.Log.Error("req.RawRequest.URL is nil")
+					return errors.New("req.RawRequest.URL is nil")
+				}
+
 				reqPath := req.RawRequest.URL.Path
 				currentReplica := req.RawRequest.URL.Host
 
@@ -236,6 +246,13 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	logger.Log.Infof("Proxying request to %s", targetURL)
+	if restyRequest.RawRequest == nil {
+		logger.Log.Error("req.RawRequest is nil in handleRequest function")
+	}
+
+	if restyRequest.RawRequest.URL == nil {
+		logger.Log.Error("req.RawRequest.URL is nil in handleRequest function")
+	}
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 
 	if err != nil {
