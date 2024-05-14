@@ -48,7 +48,7 @@ func (p *RoundRobinPolicy) SelectReplica(request *types.InferRequest) string {
 	replica := p.ReadyReplicas[p.index]
 	p.index = (p.index + 1) % len(p.ReadyReplicas)
 
-	log.Printf("Selected replica %s for request %v\n", replica, request)
+	log.Printf("Selected replica %s for request %v", replica, request)
 	return replica
 }
 

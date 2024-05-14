@@ -298,7 +298,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 				// obtain a permit
 				concurrencyControl <- struct{}{}
 				if err := collector.Collect(url); err != nil {
-					logger.Log.Errorf("Error collecting from %s: %v\n", url, err)
+					logger.Log.Errorf("Error collecting from %s: %v", url, err)
 				} else {
 					lb.loadBalancingPolicy.UpdateTgiQueueSize(&collector.ReplicaMetrics)
 				}
@@ -309,7 +309,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 		// wait for all requests to finish
 		wg.Wait()
 		roundEnd := time.Now()
-		logger.Log.Infof("Round took %v\n", roundEnd.Sub(roundStart).Milliseconds())
+		logger.Log.Infof("Round took %v", roundEnd.Sub(roundStart).Milliseconds())
 		// print the queue size for each replica
 		metrics.PrintSortedTgiMetric(collector)
 	}
@@ -319,7 +319,7 @@ func (lb *BaichuanScheduler) Run() {
 	go endpointwatcher.WatchEndpoints(lb.schedulerConfig)
 	go lb.syncReplicas()
 
-	logger.Log.Infof("Baichuan scheduler started on http://0.0.0.0:%d\n", lb.loadBalancerPort)
+	logger.Log.Infof("Baichuan scheduler started on http://0.0.0.0:%d", lb.loadBalancerPort)
 	logger.Log.Infof("Baichuan scheduler is using %s load balancing policy", lb.schedulerConfig.LBPolicy)
 	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
 }

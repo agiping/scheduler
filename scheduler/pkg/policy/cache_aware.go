@@ -118,7 +118,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 
 	selectedPod.NumberOfRequests++
 	// TODO (Ping Zhang): Only record requestsID to avoid printing sensitive information and large request body.
-	log.Printf("Selected replica %s for [%s] request %v\n", selectedPod.IP, requestType, requestBody)
+	log.Printf("Selected replica %s for [%s] request %v", selectedPod.IP, requestType, requestBody)
 	return selectedPod.IP
 }
 
