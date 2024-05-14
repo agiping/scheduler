@@ -153,7 +153,7 @@ func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
 		return true
 	})
 
-	logger.Log.Debugf("Number of Requests per Replica: %v", requestsPerReplica)
+	logger.Log.Infof("Number of Requests per Replica: %v", requestsPerReplica)
 }
 
 func (p *LeastNumberOfRequestsPolicy) GetPolicyName() string {
