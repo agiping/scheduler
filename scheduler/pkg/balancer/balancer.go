@@ -80,29 +80,29 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 			func(c *resty.Client, req *resty.Request) error {
 				// retry only if the request is not the first attempt
 				logger.Log.Debugf("Request Attempt: %d", req.Attempt)
-				if req.Attempt == 0 {
+				if req.Attempt <= 1 {
 					return nil
 				}
 				// redirect the request to another replica
 				inferRequestID, ok := req.Context().Value("inferRequestID").(string)
 				if !ok {
 					logger.Log.Error("Failed to extract inferRequestID from context in OnBeforeRequest")
+					return errors.New("failed to extract inferRequestID from context")
+				}
+				if inferRequestID == "" {
+					logger.Log.Error("inferRequestID extracted for retry is empty")
+					return errors.New("no infer request found for retry in the context")
 				}
 				logger.Log.Infof("The inferID is %s", inferRequestID)
 
-				if inferRequestID == "" {
-					logger.Log.Error("inferRequestID extracted from context is: empty")
-					return errors.New("no infer request found in the context")
-				}
-
 				if req.RawRequest == nil {
-					logger.Log.Error("req.RawRequest is nil")
-					return errors.New("req.RawRequest is nil")
+					logger.Log.Error("Retry Error: req.RawRequest is nil")
+					return errors.New("Retry Error: req.RawRequest is nil")
 				}
 
 				if req.RawRequest.URL == nil {
-					logger.Log.Error("req.RawRequest.URL is nil")
-					return errors.New("req.RawRequest.URL is nil")
+					logger.Log.Error("Retry Error: req.RawRequest.URL is nil")
+					return errors.New("Retry Error: req.RawRequest.URL is nil")
 				}
 
 				reqPath := req.RawRequest.URL.Path
@@ -114,8 +114,8 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 
 				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, currentReplica)
 				if newURL == "" {
-					logger.Log.Warn("No ready replicas for retry")
-					return errors.New("no ready replicas for retry")
+					logger.Log.Warn("Retry Error: No ready replicas for retry")
+					return errors.New("Retry Error: no ready replicas for retry")
 				}
 				if !startsWithHTTP(newURL) {
 					newURL = "http://" + newURL
@@ -231,12 +231,6 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	// Save request ID in the context for retry
 	restyRequest.SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID))
-	inferID, ok := restyRequest.Context().Value("inferRequestID").(string)
-	if !ok {
-		logger.Log.Error("Failed to extract inferRequestID from context")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract inferRequestID from context"})
-	}
-	logger.Log.Infof("The inferID is %s", inferID)
 
 	// Copy headers
 	for key, values := range c.Request.Header {
@@ -246,13 +240,6 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	logger.Log.Infof("Proxying request to %s", targetURL)
-	if restyRequest.RawRequest == nil {
-		logger.Log.Error("req.RawRequest is nil in handleRequest function")
-	}
-
-	if restyRequest.RawRequest.URL == nil {
-		logger.Log.Error("req.RawRequest.URL is nil in handleRequest function")
-	}
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 
 	if err != nil {
