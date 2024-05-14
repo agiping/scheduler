@@ -52,7 +52,7 @@ func (p *RoundRobinPolicy) SelectReplica(request *types.InferRequest) string {
 	return replica
 }
 
-func (p *RoundRobinPolicy) SelectReplicaForRetry(request *types.InferRequest, replica string) string {
+func (p *RoundRobinPolicy) SelectReplicaForRetry(request, replica string) string {
 	return "Not implemented yet"
 }
 

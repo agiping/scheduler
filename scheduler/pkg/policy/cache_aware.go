@@ -122,7 +122,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 	return selectedPod.IP
 }
 
-func (cp *CacheAwarePolicy) SelectReplicaForRetry(request *types.InferRequest, replica string) string {
+func (cp *CacheAwarePolicy) SelectReplicaForRetry(request, replica string) string {
 	return "Not implemented yet"
 }
 

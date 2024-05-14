@@ -80,18 +80,24 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 			func(c *resty.Client, req *resty.Request) error {
 				// retry only if the request is not the first attempt
 				logger.Log.Debugf("Request Attempt: %d", req.Attempt)
-				if req.Attempt == 1 {
+				if req.Attempt == 0 {
 					return nil
 				}
 				// redirect the request to another replica
-				originalPath, _ := req.Context().Value("originalPath").(string)
-				inferRequest, _ := req.Context().Value("inferRequest").(*types.InferRequest)
-				if inferRequest == nil {
-					logger.Log.Error("inferRequest extreacted from context is: nil")
+				inferRequestID, _ := req.Context().Value("inferRequestID").(string)
+				if inferRequestID == "" {
+					logger.Log.Error("inferRequestID extracted from context is: empty")
 					return errors.New("no infer request found in the context")
 				}
-				currentURL := req.URL
-				newURL := lbpolicy.SelectReplicaForRetry(inferRequest, currentURL)
+
+				reqPath := req.RawRequest.URL.Path
+				currentReplica := req.RawRequest.URL.Host
+
+				logger.Log.Infof("Request %s is retried", inferRequestID)
+				logger.Log.Infof("The original replica URL is %s", currentReplica)
+				logger.Log.Infof("The original request path is %s", reqPath)
+
+				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, currentReplica)
 				if newURL == "" {
 					logger.Log.Warn("No ready replicas for retry")
 					return errors.New("no ready replicas for retry")
@@ -99,8 +105,8 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				if !startsWithHTTP(newURL) {
 					newURL = "http://" + newURL
 				}
-				req.URL = newURL + originalPath
-				logger.Log.Warnf("Request is sent to %s for retry", req.URL)
+				req.URL = newURL + reqPath
+				logger.Log.Infof("Request is sent to %s for retry", req.URL)
 				return nil
 			})
 	} else {
@@ -168,10 +174,6 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		RequestID: uuid.New().String(),
 	}
 
-	// save the request context for retry
-	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), "inferRequest", &inferRequest))
-	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), "originalPath", c.Request.URL.Path))
-
 	// Read the original body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -210,9 +212,12 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	restyRequest := lb.appClient.R().
 		EnableTrace().
 		SetDoNotParseResponse(true).
-		SetBody(bodyBytes).
-		SetContext(c)
+		SetBody(bodyBytes)
 
+	// Save request ID in the context for retry
+	restyRequest.SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID))
+
+	// Copy headers
 	for key, values := range c.Request.Header {
 		for _, value := range values {
 			restyRequest.SetHeader(key, value)

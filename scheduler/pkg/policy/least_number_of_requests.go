@@ -66,9 +66,9 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	return selectedReplica
 }
 
-func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.InferRequest, currentReplica string) string {
+func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(requestID, currentReplica string) string {
 	if len(p.ReadyReplicas) == 0 {
-		logger.Log.Warnf("No replicas available for retry request %v", request)
+		logger.Log.Warnf("No replicas available for retry requestID: %s", requestID)
 		return ""
 	}
 
@@ -88,7 +88,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.Infer
 
 	// If no other replica is found for this retry, return empty
 	if selectedReplica == "" {
-		logger.Log.Warnf("No other replicas available for retry request %v", request)
+		logger.Log.Warnf("No other replicas available for retry requestID: %s", requestID)
 		return ""
 	}
 
@@ -96,7 +96,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(request *types.Infer
 	currentCount, _ := p.connectionsCount.LoadOrStore(selectedReplica, 0)
 	p.connectionsCount.Store(selectedReplica, currentCount.(int)+1)
 
-	logger.Log.Infof("Selected replica %s for retry request %s", selectedReplica, request.RequestID)
+	logger.Log.Infof("Selected replica %s for retry request %s", selectedReplica, requestID)
 	p.PrintNumberOfRequests()
 	return selectedReplica
 }

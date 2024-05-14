@@ -12,7 +12,7 @@ type LoadBalancingPolicy interface {
 	GetReadyReplicas() []*types.Pod
 	SetReadyReplicas([]string)
 	SelectReplica(*types.InferRequest) string
-	SelectReplicaForRetry(*types.InferRequest, string) string
+	SelectReplicaForRetry(string, string) string
 	UpdateAfterResponse(string)
 	UpdateTgiQueueSize(*sync.Map)
 	GetPolicyName() string
