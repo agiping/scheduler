@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/types"
 )
@@ -302,4 +303,8 @@ func (cp *CacheAwarePolicy) GetReadyReplicas() []*types.Pod {
 
 func (cp *CacheAwarePolicy) GetPolicyName() string {
 	return "CacheAwarePolicy"
+}
+
+func (p *CacheAwarePolicy) PrintNumberOfRequests() {
+	logger.Log.Info("Not implemented yet")
 }

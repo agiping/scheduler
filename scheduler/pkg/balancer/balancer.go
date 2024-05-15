@@ -53,6 +53,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 	client := resty.New()
 	client.SetTimeout(sconfig.TimeoutPolicy.DefaultTimeout)
 	client.SetContentLength(true)
+
 	client.SetTransport(&http.Transport{
 		MaxIdleConns:       MaxIdleConnsInClientPool,
 		IdleConnTimeout:    90 * time.Second,
@@ -93,7 +94,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 					logger.Log.Error("inferRequestID extracted for retry is empty")
 					return errors.New("no infer request found for retry in the context")
 				}
-				logger.Log.Infof("The inferID is %s", inferRequestID)
+				logger.Log.Infof("The inferRequestID is %s", inferRequestID)
 
 				if req.RawRequest == nil {
 					logger.Log.Error("Retry Error: req.RawRequest is nil")
@@ -117,17 +118,42 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 					logger.Log.Warn("Retry Error: No ready replicas for retry")
 					return errors.New("Retry Error: no ready replicas for retry")
 				}
-				if !startsWithHTTP(newURL) {
+				if !utils.StartsWithHTTP(newURL) {
 					newURL = "http://" + newURL
 				}
 				req.URL = newURL + reqPath
-				logger.Log.Infof("Request is sent to %s for retry", req.URL)
+				logger.Log.Infof("Request %s is sent to %s for retry", inferRequestID, req.URL)
 				return nil
 			})
 	} else {
 		// we keep this to manually disbale retry
 		client.SetRetryCount(0)
 	}
+
+	// The request is sent to the selected replica successfully, but the response type is uncertain.
+	client.OnAfterResponse(func(c *resty.Client, resp *resty.Response) error {
+		replica := resp.Request.RawRequest.URL.Host
+		logger.Log.Infof("releasing request number on replica: %s", replica)
+		// Each time a request finished, success or failure,
+		// update the number of requests for the selected replica.
+		lbpolicy.UpdateAfterResponse(replica)
+		return nil
+	})
+
+	// TODO(Ping Zhang): the request sent process is failed due to some reasons,
+	// e.g., connection error, reset, etc.
+
+	/***
+		client.OnError(func(req *resty.Request, err error) {
+		if v, ok := err.(*resty.ResponseError); ok {
+			// v.Response contains the last response from the server
+			// v.Err contains the original error
+			logger.Log.Infof("OnError Response Status Code: %d", v.Response.StatusCode())
+		}
+		// Log the error, increment a metric, etc...
+		lbpolicy.UpdateAfterResponse(req.RawRequest.URL.Host)
+	})
+	***/
 
 	return client
 }
@@ -192,45 +218,33 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	// Read the original body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		logger.Log.Error("Failed to read request body: ", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body: " + err.Error()})
+		logAndRespondError(c, http.StatusInternalServerError, "Failed to read request body", err)
 		return
 	}
 
-	path := c.Request.URL.Path
-	isStream := strings.HasSuffix(path, "/generate_stream")
-
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	if err := json.NewDecoder(c.Request.Body).Decode(&inferRequest.Body); err != nil {
-		logger.Log.Errorf("Invalid request body: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		logAndRespondError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
 	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
-
 	if readyReplicaURL == "" {
-		logger.Log.Error("No ready replicas.")
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No ready replicas."})
+		logAndRespondError(c, http.StatusServiceUnavailable, "No ready replicas", nil)
 		return
 	}
 
-	var urlWithHTTP string
-	if !startsWithHTTP(readyReplicaURL) {
-		urlWithHTTP = "http://" + readyReplicaURL
-	} else {
-		urlWithHTTP = readyReplicaURL
-	}
+	path := c.Request.URL.Path
+	targetURL := formatURL(readyReplicaURL, path)
 
-	targetURL := urlWithHTTP + path
-
+	// In the bellow, we allow resty client to parse the response body.
+	// In that way, we make sure that the response body is always read
+	// and closed properly in any case.
 	restyRequest := lb.appClient.R().
 		EnableTrace().
-		SetDoNotParseResponse(true).
-		SetBody(bodyBytes)
-
-	// Save request ID in the context for retry
-	restyRequest.SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID))
+		SetDoNotParseResponse(false).
+		SetBody(bodyBytes).
+		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
 
 	// Copy headers
 	for key, values := range c.Request.Header {
@@ -241,54 +255,29 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	logger.Log.Infof("Proxying request to %s", targetURL)
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
-
 	if err != nil {
-		logger.Log.Errorf("Failed to proxy request, error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to proxy request: " + err.Error()})
+		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
 		return
 	}
 
-	logger.Log.Debug("======================= Request Trace Info: =====================")
-	ti := resp.Request.TraceInfo()
-	logger.Log.Debug("  DNSLookup     :", ti.DNSLookup)
-	logger.Log.Debug("  ConnTime      :", ti.ConnTime)
-	logger.Log.Debug("  TCPConnTime   :", ti.TCPConnTime)
-	logger.Log.Debug("  TLSHandshake  :", ti.TLSHandshake)
-	logger.Log.Debug("  ServerTime    :", ti.ServerTime)
-	logger.Log.Debug("  ResponseTime  :", ti.ResponseTime)
-	logger.Log.Debug("  TotalTime     :", ti.TotalTime)
-	logger.Log.Debug("  IsConnReused  :", ti.IsConnReused)
-	logger.Log.Debug("  IsConnWasIdle :", ti.IsConnWasIdle)
-	logger.Log.Debug("  ConnIdleTime  :", ti.ConnIdleTime)
-	logger.Log.Debug("  RequestAttempt:", ti.RequestAttempt)
-	logger.Log.Debug("  RemoteAddr    :", ti.RemoteAddr.String())
-	logger.Log.Debug("======================== Request Trace Info: ====================")
+	lb.setResponseHeaders(c, resp.RawResponse)
+	lb.traceInfoForDebug(resp.Request.TraceInfo())
 
-	setResponseHeaders(c, resp.RawResponse)
-	defer resp.RawResponse.Body.Close()
+	responseBytes := resp.Body()
 
-	if isStream {
+	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
-		_, err := io.Copy(c.Writer, resp.RawResponse.Body)
+		_, err := io.Copy(c.Writer, io.NopCloser(bytes.NewBuffer(responseBytes)))
 		if err != nil {
-			logger.Log.Errorf("Failed to stream proxied response, error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream proxied response: " + err.Error()})
+			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", err)
 			return
 		}
-		logger.Log.Infof("Streamed response to client, statuscode: %d", resp.StatusCode())
+		logger.Log.Infof("Streamed response to client successfully, statuscode: %d", resp.StatusCode())
 	} else {
 		// For non-stream, read all and then send
-		body, err := io.ReadAll(resp.RawResponse.Body)
-		if err != nil {
-			logger.Log.Errorf("Failed to read proxied non-stream response, error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read proxied response: " + err.Error()})
-			return
-		}
-		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), body)
-		logger.Log.Infof("Sent response to client, statuscode: %d", resp.StatusCode())
+		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), responseBytes)
+		logger.Log.Infof("Sent response to client successfully, statuscode: %d", resp.StatusCode())
 	}
-	// Once finished, update the number of requests for the selected replica
-	lb.loadBalancingPolicy.UpdateAfterResponse(readyReplicaURL)
 }
 
 func (lb *BaichuanScheduler) StartCollectingQueueSize() {
@@ -344,7 +333,11 @@ func (lb *BaichuanScheduler) Run() {
 	lb.appServer.Run(fmt.Sprintf(":%d", lb.loadBalancerPort))
 }
 
-func setResponseHeaders(c *gin.Context, resp *http.Response) {
+func (lb *BaichuanScheduler) setResponseHeaders(c *gin.Context, resp *http.Response) {
+	if resp == nil {
+		logger.Log.Warn("Response is nil")
+		return
+	}
 	c.Writer.WriteHeader(resp.StatusCode)
 	for key, values := range resp.Header {
 		for _, value := range values {
@@ -353,6 +346,37 @@ func setResponseHeaders(c *gin.Context, resp *http.Response) {
 	}
 }
 
-func startsWithHTTP(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+func (lb *BaichuanScheduler) traceInfoForDebug(ti resty.TraceInfo) {
+	logger.Log.Debug("======================= Request Trace Info: Start =====================")
+	logger.Log.Debug("  DNSLookup     :", ti.DNSLookup)
+	logger.Log.Debug("  ConnTime      :", ti.ConnTime)
+	logger.Log.Debug("  TCPConnTime   :", ti.TCPConnTime)
+	logger.Log.Debug("  ServerTime    :", ti.ServerTime)
+	logger.Log.Debug("  ResponseTime  :", ti.ResponseTime)
+	logger.Log.Debug("  TotalTime     :", ti.TotalTime)
+	logger.Log.Debug("  IsConnReused  :", ti.IsConnReused)
+	logger.Log.Debug("  IsConnWasIdle :", ti.IsConnWasIdle)
+	logger.Log.Debug("  ConnIdleTime  :", ti.ConnIdleTime)
+	logger.Log.Debug("  RequestAttempt:", ti.RequestAttempt)
+	logger.Log.Debug("  RemoteAddr    :", ti.RemoteAddr.String())
+	logger.Log.Debug("======================== Request Trace Info: End  ====================")
+}
+
+// formatURL ensures the URL is prefixed with "http://" if not already present.
+func formatURL(baseURL, path string) string {
+	if !utils.StartsWithHTTP(baseURL) {
+		baseURL = "http://" + baseURL
+	}
+	return baseURL + path
+}
+
+// logAndRespondError logs the error and sends a JSON response with the specified status and error message.
+func logAndRespondError(c *gin.Context, status int, message string, err error) {
+	if err != nil {
+		logger.Log.Errorf("%s: %v", message, err)
+		c.JSON(status, gin.H{"error": message + ": " + err.Error()})
+	} else {
+		logger.Log.Error(message)
+		c.JSON(status, gin.H{"error": message})
+	}
 }

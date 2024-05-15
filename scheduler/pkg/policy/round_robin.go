@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
 )
 
@@ -81,4 +82,8 @@ func (p *RoundRobinPolicy) UpdateTgiQueueSize(*sync.Map) {
 
 func (p *RoundRobinPolicy) GetPolicyName() string {
 	return "RoundRobin"
+}
+
+func (p *RoundRobinPolicy) PrintNumberOfRequests() {
+	logger.Log.Info("Not implemented yet")
 }

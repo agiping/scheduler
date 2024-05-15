@@ -123,3 +123,7 @@ func ParseRetryStatusCodes(codes string) ([]int, error) {
 
 	return result, nil
 }
+
+func StartsWithHTTP(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}

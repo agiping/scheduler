@@ -25,7 +25,7 @@ func main() {
 	// retry policy
 	enableRetry := flag.Bool("enable-retry", true, "Enable or disable retry mechanism")
 	retriableStatusCodes := flag.String("retriable-status-codes", "500,502,503,504", "HTTP status codes that are retriable")
-	maxRetryTimes := flag.Int("max-retry-times", 3, "Maximum number of retries")
+	maxRetryTimes := flag.Int("max-retry-times", 2, "Maximum number of retries")
 	defaultRetryDelay := flag.Int("default-retry-delay-seconds", 1, "Default delay between retries")
 	maxRetryDelay := flag.Int("max-retry-delay-seconds", 20, "Maximum delay between retries")
 	backoffStrategy := flag.String("backoff-strategy", "exponential", "Backoff strategy to use (fixed, linear, exponential)")

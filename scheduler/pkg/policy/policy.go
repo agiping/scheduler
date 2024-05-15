@@ -16,4 +16,5 @@ type LoadBalancingPolicy interface {
 	UpdateAfterResponse(string)
 	UpdateTgiQueueSize(*sync.Map)
 	GetPolicyName() string
+	PrintNumberOfRequests()
 }
