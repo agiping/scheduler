@@ -267,10 +267,36 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
-		_, err := io.Copy(c.Writer, resp.RawBody())
-		if err != nil {
-			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", err)
+		c.Writer.Header().Set("Content-Type", resp.Header().Get("Content-Type"))
+		c.Writer.WriteHeader(resp.StatusCode())
+
+		// Create a flusher
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", errors.New("response writer does not support flushing"))
 			return
+		}
+
+		// Stream the response and flush
+		rawBody := resp.RawBody()
+		defer rawBody.Close()
+		buf := make([]byte, 32*1024) // Use a buffer size suitable for your needs
+		for {
+			n, err := rawBody.Read(buf)
+			if n > 0 {
+				_, writeErr := c.Writer.Write(buf[:n])
+				if writeErr != nil {
+					logAndRespondError(c, http.StatusInternalServerError, "Failed to write proxied response", writeErr)
+					return
+				}
+				flusher.Flush() // Flush the buffer to the client
+			}
+			if err != nil {
+				if err != io.EOF {
+					logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
+				}
+				break
+			}
 		}
 		logger.Log.Infof("Streamed response to client successfully, statuscode: %d", resp.StatusCode())
 	} else {
