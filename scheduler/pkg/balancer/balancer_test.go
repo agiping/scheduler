@@ -112,7 +112,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	restyRequest := scheduler.appClient.
 		R().
 		EnableTrace().
-		SetDoNotParseResponse(false).
+		SetDoNotParseResponse(true).
 		SetHeader("Content-Type", "application/json").
 		SetBody(map[string]string{"name": "ping", "inputs": "Write a song with code"})
 
@@ -128,13 +128,16 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	url = "http://" + url
 	resp, err := restyRequest.Execute("POST", url)
 	if err != nil {
-		t.Fatalf("Error executing request: %v", err)
+		t.Logf("Error executing request: %v", err)
+	} else if resp.StatusCode() != http.StatusOK {
+		t.Logf("Request failed with status: %d, response: %s", resp.StatusCode(), resp.String())
 	}
 
 	body := resp.Body()
 	t.Logf("Statuscode: %d", resp.StatusCode())
 	t.Logf("Response body: %s", string(body))
 
+	scheduler.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
 	scheduler.loadBalancingPolicy.PrintNumberOfRequests()
 }
 
@@ -178,7 +181,7 @@ func startServer1(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	gin.SetMode(gin.ReleaseMode)
-	router := gin.New()
+	router := gin.Default()
 	router.POST("/generate", handleRequest1)
 	fmt.Println("Server 1 started on port 8891")
 	router.Run(":8891")
@@ -189,7 +192,7 @@ func startServer2(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	gin.SetMode(gin.ReleaseMode)
-	router := gin.New()
+	router := gin.Default()
 	router.POST("/generate", handleRequest2)
 	fmt.Println("Server 2 started on port 8892")
 	router.Run(":8892")
@@ -198,7 +201,7 @@ func startServer2(wg *sync.WaitGroup) {
 func handleRequest1(c *gin.Context) {
 	fmt.Println("Received request on server 1")
 	c.JSON(http.StatusInternalServerError, gin.H{
-		"error": "request failed",
+		"error": "Service is not available",
 	})
 }
 

@@ -79,12 +79,12 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 			})
 		client.OnBeforeRequest(
 			func(c *resty.Client, req *resty.Request) error {
-				// retry only if the request is not the first attempt
+				// Retry only if the request is not the first attempt
 				logger.Log.Debugf("Request Attempt: %d", req.Attempt)
 				if req.Attempt <= 1 {
 					return nil
 				}
-				// redirect the request to another replica
+				// Redirect the request to another replica
 				inferRequestID, ok := req.Context().Value("inferRequestID").(string)
 				if !ok {
 					logger.Log.Error("Failed to extract inferRequestID from context in OnBeforeRequest")
@@ -108,10 +108,12 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 
 				reqPath := req.RawRequest.URL.Path
 				currentReplica := req.RawRequest.URL.Host
+				// I. Release the request number on the replica once the request is failed inner retry.
+				logger.Log.Infof("releasing request number on failed replica: %s", currentReplica)
+				lbpolicy.UpdateAfterResponse(currentReplica)
 
 				logger.Log.Infof("Request %s is retried", inferRequestID)
-				logger.Log.Infof("The original replica URL is %s", currentReplica)
-				logger.Log.Infof("The original request path is %s", reqPath)
+				logger.Log.Infof("The original replica URL is %s, path is %s", currentReplica, reqPath)
 
 				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, currentReplica)
 				if newURL == "" {
@@ -126,12 +128,15 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				return nil
 			})
 	} else {
-		// we keep this to manually disbale retry
+		// We keep this to manually disbale retry
 		client.SetRetryCount(0)
 	}
 
-	// The request is sent to the selected replica successfully, but the response type is uncertain.
-	// The OnAfterResponse hooks will be executed only when SetDoNotParseResponse(true).
+	// TODO (Ping Zhang): the request is sent to the selected replica successfully,
+	// but the response type is uncertain. the OnAfterResponse hooks will be executed
+	// only when SetDoNotParseResponse(true).
+
+	/***
 	client.OnAfterResponse(func(c *resty.Client, resp *resty.Response) error {
 		replica := resp.Request.RawRequest.URL.Host
 		logger.Log.Infof("releasing request number on replica: %s", replica)
@@ -140,6 +145,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 		lbpolicy.UpdateAfterResponse(replica)
 		return nil
 	})
+	***/
 
 	// TODO(Ping Zhang): the request sent process is failed due to some reasons,
 	// e.g., connection error, reset, etc.
@@ -241,7 +247,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	restyRequest := lb.appClient.R().
 		EnableTrace().
-		SetDoNotParseResponse(false).
+		SetDoNotParseResponse(true).
 		SetBody(bodyBytes).
 		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
 
@@ -254,6 +260,13 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	logger.Log.Infof("Proxying request to %s", targetURL)
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
+	/***
+	II. Release the request number on the replica once:
+	     (1) the request is finished successfully.
+		 (2) the request failed even after max retries.
+	***/
+	defer lb.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
+
 	if err != nil {
 		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
 		return
@@ -263,9 +276,9 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	lb.traceInfoForDebug(resp.Request.TraceInfo())
 
 	rawBody := resp.RawBody()
-	// defer rawBody.Close()
-	// TODO(Ping Zhang): during retry, if retry is failed, the number of requests should be updated.
-	// defer lb.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
+	// Since we are using SetDoNotParseResponse(true),
+	// we need to close the body manually
+	defer rawBody.Close()
 
 	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
