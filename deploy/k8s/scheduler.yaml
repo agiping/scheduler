@@ -66,7 +66,7 @@ spec:
       terminationGracePeriodSeconds: 75
       containers:
       - name: bc-scheduler
-        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.0.0
+        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.1.0
         resources:
           requests:
             memory: "10Gi"
@@ -76,7 +76,9 @@ spec:
             cpu: "10"
         imagePullPolicy: IfNotPresent
         command: ["./bcScheduler"]
-        args: ["--load-balancer-port=8890"]
+        args: 
+          - "--load-balancer-port=8890"
+          - "--retriable-status-codes=500,502,503,504,424,422"
         lifecycle:
           preStop:
             exec:
