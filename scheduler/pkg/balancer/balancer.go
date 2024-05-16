@@ -242,7 +242,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	// and closed properly in any case.
 	restyRequest := lb.appClient.R().
 		EnableTrace().
-		SetDoNotParseResponse(false).
+		SetDoNotParseResponse(true).
 		SetBody(bodyBytes).
 		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
 
@@ -263,17 +263,18 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	lb.setResponseHeaders(c, resp.RawResponse)
 	lb.traceInfoForDebug(resp.Request.TraceInfo())
 
-	responseBytes := resp.Body()
+	// responseBytes := resp.Body()
 
 	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
-		_, err := io.Copy(c.Writer, io.NopCloser(bytes.NewBuffer(responseBytes)))
+		_, err := io.Copy(c.Writer, resp.RawBody())
 		if err != nil {
 			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", err)
 			return
 		}
 		logger.Log.Infof("Streamed response to client successfully, statuscode: %d", resp.StatusCode())
 	} else {
+		responseBytes := resp.Body()
 		// For non-stream, read all and then send
 		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), responseBytes)
 		logger.Log.Infof("Sent response to client successfully, statuscode: %d", resp.StatusCode())
