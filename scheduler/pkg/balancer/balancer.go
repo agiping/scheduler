@@ -131,6 +131,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 	}
 
 	// The request is sent to the selected replica successfully, but the response type is uncertain.
+	// The OnAfterResponse hooks will be executed only when SetDoNotParseResponse(true).
 	client.OnAfterResponse(func(c *resty.Client, resp *resty.Response) error {
 		replica := resp.Request.RawRequest.URL.Host
 		logger.Log.Infof("releasing request number on replica: %s", replica)
@@ -144,7 +145,8 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 	// e.g., connection error, reset, etc.
 
 	/***
-		client.OnError(func(req *resty.Request, err error) {
+	client.OnError(func(req *resty.Request, err error) {
+		logger.Log.Info("OnError Callback is called ======")
 		if v, ok := err.(*resty.ResponseError); ok {
 			// v.Response contains the last response from the server
 			// v.Err contains the original error
@@ -237,12 +239,9 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	path := c.Request.URL.Path
 	targetURL := formatURL(readyReplicaURL, path)
 
-	// In the bellow, we allow resty client to parse the response body.
-	// In that way, we make sure that the response body is always read
-	// and closed properly in any case.
 	restyRequest := lb.appClient.R().
 		EnableTrace().
-		SetDoNotParseResponse(true).
+		SetDoNotParseResponse(false).
 		SetBody(bodyBytes).
 		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
 
@@ -263,7 +262,10 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	lb.setResponseHeaders(c, resp.RawResponse)
 	lb.traceInfoForDebug(resp.Request.TraceInfo())
 
-	// responseBytes := resp.Body()
+	rawBody := resp.RawBody()
+	// defer rawBody.Close()
+	// TODO(Ping Zhang): during retry, if retry is failed, the number of requests should be updated.
+	// defer lb.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
 
 	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
@@ -278,9 +280,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		}
 
 		// Stream the response and flush
-		rawBody := resp.RawBody()
-		defer rawBody.Close()
-		buf := make([]byte, 32*1024) // Use a buffer size suitable for your needs
+		buf := make([]byte, 32*1024) // TODO(Ping Zhang): tune the buffer size
 		for {
 			n, err := rawBody.Read(buf)
 			if n > 0 {
@@ -302,7 +302,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	} else {
 		// For non-stream, read all and then send
 		var responseBytes bytes.Buffer
-		_, err := io.Copy(&responseBytes, resp.RawBody())
+		_, err := io.Copy(&responseBytes, rawBody)
 		if err != nil {
 			logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
 			return

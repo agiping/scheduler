@@ -130,6 +130,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error executing request: %v", err)
 	}
+
 	body := resp.Body()
 	t.Logf("Statuscode: %d", resp.StatusCode())
 	t.Logf("Response body: %s", string(body))
