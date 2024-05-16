@@ -274,9 +274,15 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		}
 		logger.Log.Infof("Streamed response to client successfully, statuscode: %d", resp.StatusCode())
 	} else {
-		responseBytes := resp.Body()
 		// For non-stream, read all and then send
-		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), responseBytes)
+		var responseBytes bytes.Buffer
+		_, err := io.Copy(&responseBytes, resp.RawBody())
+		if err != nil {
+			logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
+			return
+		}
+
+		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), responseBytes.Bytes())
 		logger.Log.Infof("Sent response to client successfully, statuscode: %d", resp.StatusCode())
 	}
 }
