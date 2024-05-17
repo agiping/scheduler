@@ -66,6 +66,8 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 		client.SetRetryCount(sconfig.RetryPolicy.MaxRetryTimes)
 		client.SetRetryWaitTime(sconfig.RetryPolicy.DefaultRetryDelay)
 		client.SetRetryMaxWaitTime(sconfig.RetryPolicy.MaxRetryDelay)
+		// TODO(Ping Zhang): we may need to handle stream and non-stream requests separately,
+		// in a very fine-grained way.
 		client.AddRetryCondition(
 			func(r *resty.Response, err error) bool {
 				if r != nil {
@@ -275,9 +277,6 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	if strings.HasSuffix(path, "/generate_stream") {
 		// Stream response directly to client
-		c.Writer.Header().Set("Content-Type", resp.Header().Get("Content-Type"))
-		c.Writer.WriteHeader(resp.StatusCode())
-
 		// Create a flusher
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {

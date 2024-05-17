@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -333,4 +334,97 @@ func buildLongStrings() string {
 		" It is a way to express your thoughts and ideas in a way that machines can understand." +
 		" It is a way to solve problems and create solutions that can make a difference in the world."
 	return str
+}
+
+func TestLogAndRespondError(t *testing.T) {
+	logger.Init("info")
+	// Set up the gin.Context
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// Call with an error
+	err := errors.New("test error")
+	logAndRespondError(c, http.StatusInternalServerError, "An error occurred", err)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, `{"error":"An error occurred: test error"}`, w.Body.String())
+
+	// Call without an error
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	logAndRespondError(c, http.StatusServiceUnavailable, "An error occurred", nil)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, `{"error":"An error occurred"}`, w.Body.String())
+}
+
+func TestFormatURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		path     string
+		expected string
+	}{
+		{
+			name:     "baseURL with http prefix",
+			baseURL:  "http://example.com",
+			path:     "/test",
+			expected: "http://example.com/test",
+		},
+		{
+			name:     "baseURL without http prefix",
+			baseURL:  "example.com",
+			path:     "/test",
+			expected: "http://example.com/test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := formatURL(tt.baseURL, tt.path)
+			if actual != tt.expected {
+				t.Errorf("formatURL(%q, %q) = %q; want %q", tt.baseURL, tt.path, actual, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSetResponseHeaders(t *testing.T) {
+	logger.Init("info")
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		resp     *http.Response
+		expected http.Header
+	}{
+		{
+			name: "Response is not nil",
+			resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+			},
+			expected: http.Header{
+				"Content-Type": []string{"application/json"},
+			},
+		},
+		{
+			name:     "Response is nil",
+			resp:     nil,
+			expected: http.Header{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			lb := &BaichuanScheduler{}
+			lb.setResponseHeaders(c, tt.resp)
+
+			assert.Equal(t, map[string][]string(tt.expected), map[string][]string(c.Writer.Header()))
+		})
+	}
 }
