@@ -17,6 +17,7 @@ type LeastNumberOfRequestsPolicy struct {
 // NewLeastNumberOfRequestsPolicy creates a new instance of LeastNumberOfRequestsPolicy.
 func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 	return &LeastNumberOfRequestsPolicy{
+		ReadyReplicas:    []string{},
 		connectionsCount: new(sync.Map), // initialize sync.Map
 	}
 }
@@ -135,6 +136,19 @@ func (p *LeastNumberOfRequestsPolicy) UpdateTgiQueueSize(*sync.Map) {
 
 // For debug purposes.
 func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
+	nor := p.GetNumberOfRequests()
+	logger.Log.Infof("Number of Requests per Replica: %v", nor)
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetPolicyName() string {
+	return "LeastNumberOfRequests"
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetStringReadyReplicas() []string {
+	return p.ReadyReplicas
+}
+
+func (p *LeastNumberOfRequestsPolicy) GetNumberOfRequests() map[string]int {
 	p.PoLock.RLock()
 	defer p.PoLock.RUnlock()
 
@@ -153,9 +167,5 @@ func (p *LeastNumberOfRequestsPolicy) PrintNumberOfRequests() {
 		return true
 	})
 
-	logger.Log.Infof("Number of Requests per Replica: %v", requestsPerReplica)
-}
-
-func (p *LeastNumberOfRequestsPolicy) GetPolicyName() string {
-	return "LeastNumberOfRequests"
+	return requestsPerReplica
 }

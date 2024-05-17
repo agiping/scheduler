@@ -37,7 +37,8 @@ const (
 // LoadBalancer structure for controlling proxying of endpoint replicas
 type BaichuanScheduler struct {
 	// app server of the load balancer
-	// TODO(Ping Zhang): Currently, we use gin, we will consider other high performance frameworks in case of need
+	// TODO(Ping Zhang): Currently, we use gin, we will consider other
+	// high performance frameworks in case of need
 	// e.g., Beego, Iris, Echo, Fiber, etc.
 	appServer *gin.Engine
 	appClient *resty.Client
@@ -84,6 +85,13 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				if req.Attempt <= 1 {
 					return nil
 				}
+
+				reqPath := req.RawRequest.URL.Path
+				oldReplica := req.RawRequest.URL.Host
+				// I. Release the request number on the replica once the request is failed inner retry.
+				defer logger.Log.Infof("releasing request number on failed replica: %s", oldReplica)
+				defer lbpolicy.UpdateAfterResponse(oldReplica)
+
 				// Redirect the request to another replica
 				inferRequestID, ok := req.Context().Value("inferRequestID").(string)
 				if !ok {
@@ -96,26 +104,10 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				}
 				logger.Log.Infof("The inferRequestID is %s", inferRequestID)
 
-				if req.RawRequest == nil {
-					logger.Log.Error("Retry Error: req.RawRequest is nil")
-					return errors.New("Retry Error: req.RawRequest is nil")
-				}
-
-				if req.RawRequest.URL == nil {
-					logger.Log.Error("Retry Error: req.RawRequest.URL is nil")
-					return errors.New("Retry Error: req.RawRequest.URL is nil")
-				}
-
-				reqPath := req.RawRequest.URL.Path
-				currentReplica := req.RawRequest.URL.Host
-				// I. Release the request number on the replica once the request is failed inner retry.
-				logger.Log.Infof("releasing request number on failed replica: %s", currentReplica)
-				lbpolicy.UpdateAfterResponse(currentReplica)
-
 				logger.Log.Infof("Request %s is retried", inferRequestID)
-				logger.Log.Infof("The original replica URL is %s, path is %s", currentReplica, reqPath)
+				logger.Log.Infof("The original replica URL is %s, path is %s", oldReplica, reqPath)
 
-				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, currentReplica)
+				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, oldReplica)
 				if newURL == "" {
 					logger.Log.Warn("Retry Error: No ready replicas for retry")
 					return errors.New("Retry Error: no ready replicas for retry")
@@ -267,7 +259,8 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	***/
 	defer lb.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
 
-	if err != nil {
+	if err != nil || !resp.IsSuccess() {
+		logger.Log.Errorf("Failed to proxy request, status code: %s", resp.Status())
 		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
 		return
 	}
@@ -307,6 +300,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 			if err != nil {
 				if err != io.EOF {
 					logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
+					return
 				}
 				break
 			}

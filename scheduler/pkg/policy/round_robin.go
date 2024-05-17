@@ -87,3 +87,12 @@ func (p *RoundRobinPolicy) GetPolicyName() string {
 func (p *RoundRobinPolicy) PrintNumberOfRequests() {
 	logger.Log.Info("Not implemented yet")
 }
+
+func (p *RoundRobinPolicy) GetStringReadyReplicas() []string {
+	return p.ReadyReplicas
+}
+
+func (p *RoundRobinPolicy) GetNumberOfRequests() map[string]int {
+	logger.Log.Info("Not implemented yet")
+	return nil
+}

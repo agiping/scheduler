@@ -24,10 +24,11 @@ const (
 )
 
 type CacheAwarePolicy struct {
-	ReadyReplicas []*types.Pod
-	PodSet        map[string][]*types.Pod // key: sessionID, value: list of pods
-	LastModified  map[string]time.Time    // key: sessionID, value: last modified time of PodSet
-	PoLock        sync.RWMutex
+	StringReadyReplicas []string
+	ReadyReplicas       []*types.Pod
+	PodSet              map[string][]*types.Pod // key: sessionID, value: list of pods
+	LastModified        map[string]time.Time    // key: sessionID, value: last modified time of PodSet
+	PoLock              sync.RWMutex
 }
 
 func NewCacheAwarePolicy() *CacheAwarePolicy {
@@ -307,4 +308,13 @@ func (cp *CacheAwarePolicy) GetPolicyName() string {
 
 func (p *CacheAwarePolicy) PrintNumberOfRequests() {
 	logger.Log.Info("Not implemented yet")
+}
+
+func (p *CacheAwarePolicy) GetStringReadyReplicas() []string {
+	return p.StringReadyReplicas
+}
+
+func (p *CacheAwarePolicy) GetNumberOfRequests() map[string]int {
+	logger.Log.Info("Not implemented yet")
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 )
 
 func TestNewBaichuanScheduler(t *testing.T) {
@@ -70,7 +71,7 @@ func TestNewBaichuanScheduler(t *testing.T) {
 }
 
 func TestConfigureRestyClient(t *testing.T) {
-	scheduler := NewScheduler()
+	scheduler := NewScheduler(true)
 	// Assert timeout
 	assert.Equal(t, 30*time.Second, scheduler.appClient.GetClient().Timeout)
 
@@ -105,9 +106,11 @@ func TestConfigureRestyClient(t *testing.T) {
 }
 
 func TestConfigureRestyClient_Retry(t *testing.T) {
-	go MockServers()
+	go RunReplicas()
 	logger.Init("debug")
-	scheduler := NewScheduler()
+
+	t.Log("************* Testing retry policy enabled *************")
+	scheduler := NewScheduler(true)
 
 	restyRequest := scheduler.appClient.
 		R().
@@ -133,15 +136,39 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 		t.Logf("Request failed with status: %d, response: %s", resp.StatusCode(), resp.String())
 	}
 
-	body := resp.Body()
-	t.Logf("Statuscode: %d", resp.StatusCode())
-	t.Logf("Response body: %s", string(body))
+	assert.Equal(t, 200, resp.StatusCode())
 
-	scheduler.loadBalancingPolicy.UpdateAfterResponse(resp.Request.RawRequest.URL.Host)
+	finalPod := resp.Request.RawRequest.URL.Host
+	assert.Equal(t, finalPod, "localhost:8892")
+	scheduler.loadBalancingPolicy.UpdateAfterResponse(finalPod)
+	scheduler.loadBalancingPolicy.PrintNumberOfRequests()
+
+	t.Log("************* Testing retry policy disabled *************")
+	scheduler = NewScheduler(false)
+	assert.Equal(t, 0, scheduler.appClient.RetryCount)
+	assert.Equal(t, time.Duration(100000000), scheduler.appClient.RetryWaitTime)
+	assert.Equal(t, time.Duration(2000000000), scheduler.appClient.RetryMaxWaitTime)
+
+	restyRequest =
+		scheduler.
+			appClient.
+			R().
+			EnableTrace().
+			SetDoNotParseResponse(true).
+			SetHeader("Content-Type", "application/json").
+			SetBody(map[string]string{"name": "ping", "inputs": "Write a song with code"})
+
+	pod = scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
+	url = "http://" + pod + path
+	resp, err = restyRequest.Execute("POST", url)
+	finalPod = resp.Request.RawRequest.URL.Host
+	assert.Equal(t, resp.StatusCode(), 500)
+	assert.Equal(t, finalPod, "localhost:8891")
+	scheduler.loadBalancingPolicy.UpdateAfterResponse(finalPod)
 	scheduler.loadBalancingPolicy.PrintNumberOfRequests()
 }
 
-func NewScheduler() *BaichuanScheduler {
+func NewScheduler(enableRerty bool) *BaichuanScheduler {
 	var replicas []string
 	replicas = append(replicas, "localhost:8891")
 	replicas = append(replicas, "localhost:8892")
@@ -152,7 +179,7 @@ func NewScheduler() *BaichuanScheduler {
 			DefaultTimeout: 30 * time.Second,
 		},
 		RetryPolicy: config.RetryPolicy{
-			EnableRetry:          true,
+			EnableRetry:          enableRerty,
 			MaxRetryTimes:        3,
 			DefaultRetryDelay:    1 * time.Second,
 			MaxRetryDelay:        5 * time.Second,
@@ -166,7 +193,7 @@ func NewScheduler() *BaichuanScheduler {
 	return sched
 }
 
-func MockServers() {
+func RunReplicas() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -183,6 +210,7 @@ func startServer1(wg *sync.WaitGroup) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	router.POST("/generate", handleRequest1)
+	router.POST("/generate_stream", handleRequest1)
 	fmt.Println("Server 1 started on port 8891")
 	router.Run(":8891")
 }
@@ -194,6 +222,7 @@ func startServer2(wg *sync.WaitGroup) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	router.POST("/generate", handleRequest2)
+	router.POST("/generate_stream", handleRequest2)
 	fmt.Println("Server 2 started on port 8892")
 	router.Run(":8892")
 }
@@ -207,11 +236,101 @@ func handleRequest1(c *gin.Context) {
 
 func handleRequest2(c *gin.Context) {
 	fmt.Println("Received request on server 2")
-	bodyBytes, _ := io.ReadAll(c.Request.Body)
-	fmt.Println("Request body:", string(bodyBytes))
+	if c.Request.URL.Path == "/generate_stream" {
+		c.Stream(func(w io.Writer) bool {
+			_, _ = w.Write([]byte(buildLongStrings()))
+			return false
+		})
+		return
+	} else {
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		fmt.Println("Request body:", string(bodyBytes))
+		c.JSON(http.StatusOK, gin.H{
+			"server": "server2",
+		})
+	}
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"server": "server2",
-		"path":   "generate",
-	})
+func TestSyncReplicas(t *testing.T) {
+	logger.Init("debug")
+	sconfig := &config.SchedulerConfig{
+		LBPolicy: "least-number-of-requests",
+		TimeoutPolicy: config.TimeoutPolicy{
+			DefaultTimeout: 30 * time.Second,
+		},
+		RetryPolicy: config.RetryPolicy{
+			EnableRetry:          true,
+			MaxRetryTimes:        3,
+			DefaultRetryDelay:    1 * time.Second,
+			MaxRetryDelay:        5 * time.Second,
+			RetriableStatusCodes: []int{500, 502},
+		},
+	}
+	scheduler := NewBaichuanScheduler(sconfig)
+	replicas := []string{"localhost:8891", "localhost:8892"}
+	go scheduler.syncReplicas()
+
+	utils.ReadyEndpointsChan <- replicas
+	time.Sleep(1 * time.Second)
+	assert.Equal(t, scheduler.loadBalancingPolicy.GetStringReadyReplicas(), replicas)
+}
+
+func TestHandleRequest(t *testing.T) {
+	logger.Init("info")
+
+	// simulate tgi instances
+	// 8891, 8892
+	go RunReplicas()
+
+	// run the scheduler: 8890
+	scheduler := NewScheduler(true)
+	go scheduler.appServer.Run(":8890")
+
+	// request to the scheduler
+	client := resty.New()
+	resp, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(map[string]string{"inputs": "Write a song with code", "name": "ping"}).
+		Post("http://localhost:8890/generate")
+
+	// basic validation
+	assert.Nil(t, err)
+	assert.Equal(t, 200, resp.StatusCode())
+	assert.Equal(t, 1, resp.Request.Attempt)
+	assert.Equal(t, "localhost:8890", resp.Request.RawRequest.URL.Host)
+
+	// ensure all connections are released
+	nor := scheduler.loadBalancingPolicy.GetNumberOfRequests()
+	assert.Equal(t, nor, map[string]int{"localhost:8891": 0, "localhost:8892": 0})
+
+	// Invalid request
+	resp, err = client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody("inputs Write a song with code name ping").
+		Post("http://localhost:8890/generate")
+
+	assert.Nil(t, err)
+	assert.Equal(t, 1, resp.Request.Attempt)
+	assert.Equal(t, 400, resp.StatusCode())
+
+	// generate stream
+	// remove 8891 from the list of ready replicas
+	scheduler.loadBalancingPolicy.SetReadyReplicas([]string{"localhost:8892"})
+	resp, err = client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(map[string]string{"inputs": "Write a song with code", "name": "ping"}).
+		Post("http://localhost:8890/generate_stream")
+
+	assert.Nil(t, err)
+	assert.Equal(t, 200, resp.StatusCode())
+	assert.Equal(t, buildLongStrings(), string(resp.Body()))
+	nor = scheduler.loadBalancingPolicy.GetNumberOfRequests()
+	assert.Equal(t, nor, map[string]int{"localhost:8892": 0})
+}
+
+func buildLongStrings() string {
+	str := "This is awesome. Coding is a creative challenge and a journey of endless learning." +
+		" It is a way to express your thoughts and ideas in a way that machines can understand." +
+		" It is a way to solve problems and create solutions that can make a difference in the world."
+	return str
 }
