@@ -75,8 +75,13 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 						}
 					}
 				}
+				// When there is no new replicas for retry, stop retrying.
+				if r == nil && err != nil && err.Error() == "NoNewReplicasForRetry" {
+					return false
+				}
 				// TODO (Ping Zhang): fine-grained control of retry conditions
-				return err != nil // retry on other errors: e.g., connection error, reset, etc.
+				// retry on other errors: e.g., connection error, reset, etc.
+				return err != nil
 			})
 		client.OnBeforeRequest(
 			func(c *resty.Client, req *resty.Request) error {
@@ -93,24 +98,14 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				defer lbpolicy.UpdateAfterResponse(oldReplica)
 
 				// Redirect the request to another replica
-				inferRequestID, ok := req.Context().Value("inferRequestID").(string)
-				if !ok {
-					logger.Log.Error("Failed to extract inferRequestID from context in OnBeforeRequest")
-					return errors.New("failed to extract inferRequestID from context")
-				}
-				if inferRequestID == "" {
-					logger.Log.Error("inferRequestID extracted for retry is empty")
-					return errors.New("no infer request found for retry in the context")
-				}
-				logger.Log.Infof("The inferRequestID is %s", inferRequestID)
-
-				logger.Log.Infof("Request %s is retried", inferRequestID)
+				inferRequestID, _ := req.Context().Value("inferRequestID").(string)
+				logger.Log.Infof("retring Request: %s", inferRequestID)
 				logger.Log.Infof("The original replica URL is %s, path is %s", oldReplica, reqPath)
 
 				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, oldReplica)
 				if newURL == "" {
 					logger.Log.Warn("Retry Error: No ready replicas for retry")
-					return errors.New("Retry Error: no ready replicas for retry")
+					return errors.New("NoNewReplicasForRetry")
 				}
 				if !utils.StartsWithHTTP(newURL) {
 					newURL = "http://" + newURL
@@ -216,13 +211,9 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 
 	// Read the original body
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		logAndRespondError(c, http.StatusInternalServerError, "Failed to read request body", err)
-		return
-	}
-
+	bodyBytes, _ := io.ReadAll(c.Request.Body)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	if err := json.NewDecoder(c.Request.Body).Decode(&inferRequest.Body); err != nil {
 		logAndRespondError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
@@ -252,6 +243,10 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	logger.Log.Infof("Proxying request to %s", targetURL)
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
+	if resp == nil {
+		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
+		return
+	}
 	/***
 	II. Release the request number on the replica once:
 	     (1) the request is finished successfully.

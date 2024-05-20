@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	go RunReplicas()
 	logger.Init("debug")
 
-	t.Log("************* Testing retry policy enabled *************")
+	// testing retry policy enabled
 	scheduler := NewScheduler(true)
 
 	restyRequest := scheduler.appClient.
@@ -123,7 +124,6 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	inferRequest := types.InferRequest{
 		RequestID: "123",
 	}
-
 	restyRequest.SetContext(context.WithValue(restyRequest.Context(), "inferRequestID", inferRequest.RequestID))
 
 	path := "/generate"
@@ -146,7 +146,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	nor := scheduler.loadBalancingPolicy.GetNumberOfRequests()
 	assert.Equal(t, nor, map[string]int{"localhost:8891": 0, "localhost:8892": 0})
 
-	t.Log("************* Testing retry policy disabled *************")
+	// testing retry policy disabled
 	scheduler = NewScheduler(false)
 	assert.Equal(t, 0, scheduler.appClient.RetryCount)
 	assert.Equal(t, time.Duration(100000000), scheduler.appClient.RetryWaitTime)
@@ -171,6 +171,40 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	scheduler.loadBalancingPolicy.UpdateAfterResponse(finalPod)
 	nor = scheduler.loadBalancingPolicy.GetNumberOfRequests()
 	assert.Equal(t, nor, map[string]int{"localhost:8891": 0, "localhost:8892": 0})
+}
+
+func TestConfigureRestyClient_Retry_No_Replicas_Retry(t *testing.T) {
+	go RunReplicas()
+	logger.Init("debug")
+
+	scheduler := NewScheduler(true)
+	scheduler.loadBalancingPolicy.SetReadyReplicas([]string{"localhost:8891"})
+
+	restyRequest := scheduler.
+		appClient.
+		R().
+		EnableTrace().
+		SetDoNotParseResponse(true).
+		SetHeader("Content-Type", "application/json").
+		SetBody(map[string]string{"name": "ping", "inputs": "Write a song with code"})
+
+	inferRequest := types.InferRequest{
+		RequestID: "123",
+	}
+	restyRequest.SetContext(context.WithValue(restyRequest.Context(), "inferRequestID", inferRequest.RequestID))
+
+	pod := scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
+	path := "/generate"
+	url := "http://" + pod + path
+	resp, err := restyRequest.Execute("POST", url)
+
+	assert.NotNil(t, err)
+	assert.Nil(t, resp)
+
+	finalPod := restyRequest.URL
+	assert.Equal(t, true, strings.Contains(finalPod, "localhost:8891"))
+	nor := scheduler.loadBalancingPolicy.GetNumberOfRequests()
+	assert.Equal(t, nor, map[string]int{"localhost:8891": 0})
 }
 
 func NewScheduler(enableRerty bool) *BaichuanScheduler {
