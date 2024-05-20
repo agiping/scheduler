@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +18,6 @@ import (
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/endpointwatcher"
 	"scheduler/scheduler/pkg/logger"
-	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
 	"scheduler/scheduler/pkg/utils"
@@ -90,7 +88,7 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 
 				reqPath := req.RawRequest.URL.Path
 				oldReplica := req.RawRequest.URL.Host
-				// I. Release the request number on the replica once the request is failed inner retry.
+				// I. Release the request number on the replica once the request is failed inner max retry.
 				defer logger.Log.Infof("releasing request number on failed replica: %s", oldReplica)
 				defer lbpolicy.UpdateAfterResponse(oldReplica)
 
@@ -319,6 +317,12 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	}
 }
 
+/***
+// StartCollectingQueueSize starts a goroutine to collect the queue size of each replica.
+// This function is used for Cache-Aware load balancing policy.
+// We comment it out right now for UT purpose.
+// TODO (Ping Zhang): Write UT for this function.
+
 func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 	client := &http.Client{}
 	collector := metrics.NewTgiMetricCollector(client)
@@ -362,6 +366,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 		metrics.PrintSortedTgiMetric(collector)
 	}
 }
+***/
 
 func (lb *BaichuanScheduler) Run() {
 	go endpointwatcher.WatchEndpoints(lb.schedulerConfig)

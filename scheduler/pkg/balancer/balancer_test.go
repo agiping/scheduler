@@ -126,10 +126,10 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 
 	restyRequest.SetContext(context.WithValue(restyRequest.Context(), "inferRequestID", inferRequest.RequestID))
 
-	pod := scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
 	path := "/generate"
-	url := pod + path
-	url = "http://" + url
+
+	pod := scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
+	url := "http://" + pod + path
 	resp, err := restyRequest.Execute("POST", url)
 	if err != nil {
 		t.Logf("Error executing request: %v", err)
@@ -141,8 +141,10 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 
 	finalPod := resp.Request.RawRequest.URL.Host
 	assert.Equal(t, finalPod, "localhost:8892")
+
 	scheduler.loadBalancingPolicy.UpdateAfterResponse(finalPod)
-	scheduler.loadBalancingPolicy.PrintNumberOfRequests()
+	nor := scheduler.loadBalancingPolicy.GetNumberOfRequests()
+	assert.Equal(t, nor, map[string]int{"localhost:8891": 0, "localhost:8892": 0})
 
 	t.Log("************* Testing retry policy disabled *************")
 	scheduler = NewScheduler(false)
@@ -165,8 +167,10 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	finalPod = resp.Request.RawRequest.URL.Host
 	assert.Equal(t, resp.StatusCode(), 500)
 	assert.Equal(t, finalPod, "localhost:8891")
+
 	scheduler.loadBalancingPolicy.UpdateAfterResponse(finalPod)
-	scheduler.loadBalancingPolicy.PrintNumberOfRequests()
+	nor = scheduler.loadBalancingPolicy.GetNumberOfRequests()
+	assert.Equal(t, nor, map[string]int{"localhost:8891": 0, "localhost:8892": 0})
 }
 
 func NewScheduler(enableRerty bool) *BaichuanScheduler {
