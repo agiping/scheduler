@@ -63,7 +63,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       imagePullSecrets:
           - name: baichuan-inference-service
-      terminationGracePeriodSeconds: 75
+      terminationGracePeriodSeconds: 120
       containers:
       - name: bc-scheduler
         image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.1.0
@@ -84,7 +84,7 @@ spec:
             exec:
               command:
               - sleep
-              - "60"
+              - "105"
         ports:
         - containerPort: 8890
         readinessProbe:
