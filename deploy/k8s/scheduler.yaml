@@ -87,11 +87,26 @@ spec:
               - "105"
         ports:
         - containerPort: 8890
-        readinessProbe:
-          tcpSocket:
+        livenessProbe:
+          httpGet:
+            path: /health
             port: 8890
-          initialDelaySeconds: 10
+            scheme: HTTP
+          initialDelaySeconds: 3
           periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 1
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8890
+            scheme: HTTP
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 1
 ---
 # Baichuan Scheduler Service.
 apiVersion: v1

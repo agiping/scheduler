@@ -182,6 +182,7 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	// Create and configure resty client
 	balancer.appClient = configureRestyClient(balancer.loadBalancingPolicy, sconfig)
 
+	balancer.appServer.GET("/health", balancer.handleHealthCheck)
 	balancer.appServer.Any("/generate", balancer.handleRequest)
 	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
 
@@ -399,6 +400,17 @@ func (lb *BaichuanScheduler) traceInfoForDebug(ti resty.TraceInfo) {
 	logger.Log.Debug("  RequestAttempt:", ti.RequestAttempt)
 	logger.Log.Debug("  RemoteAddr    :", ti.RemoteAddr.String())
 	logger.Log.Debug("======================== Request Trace Info: End  ====================")
+}
+
+func (lb *BaichuanScheduler) handleHealthCheck(c *gin.Context) {
+	c.Header("Content-Type", "text/plain")
+	numOfReadyReplicas := len(lb.loadBalancingPolicy.GetStringReadyReplicas())
+	if numOfReadyReplicas > 0 {
+		c.String(http.StatusOK, "OK")
+	} else {
+		logger.Log.Error("No ready replicas available")
+		c.String(http.StatusServiceUnavailable, "No ready replicas available")
+	}
 }
 
 // formatURL ensures the URL is prefixed with "http://" if not already present.
