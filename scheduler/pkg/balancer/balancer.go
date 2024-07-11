@@ -21,6 +21,10 @@ import (
 	"scheduler/scheduler/pkg/policy"
 	"scheduler/scheduler/pkg/types"
 	"scheduler/scheduler/pkg/utils"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -46,6 +50,8 @@ type BaichuanScheduler struct {
 	// and metric aggregation strategy.
 	loadBalancingPolicy policy.LoadBalancingPolicy
 	schedulerConfig     *config.SchedulerConfig
+	// request counts
+	request_total prometheus.Counter
 }
 
 func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.SchedulerConfig) *resty.Client {
@@ -167,6 +173,11 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 		appServer:        gin.New(),
 		loadBalancerPort: sconfig.LBPort,
 		schedulerConfig:  sconfig,
+		request_total: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "request_counts",
+				Help: "the total nums of requests",
+			}),
 	}
 
 	// Initialize the load balancing policy
@@ -183,6 +194,7 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	balancer.appClient = configureRestyClient(balancer.loadBalancingPolicy, sconfig)
 
 	balancer.appServer.GET("/health", balancer.handleHealthCheck)
+	balancer.appServer.GET("/metrics", balancer.handleMetrics)
 	balancer.appServer.Any("/generate", balancer.handleRequest)
 	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
 
@@ -207,6 +219,9 @@ func (lb *BaichuanScheduler) syncReplicas() {
 
 // handleRequest manages incoming requests by proxying them to service replicas.
 func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
+	// add request counts and update metrics
+	lb.request_total.Inc()
+
 	inferRequest := types.InferRequest{
 		RequestID: uuid.New().String(),
 	}
@@ -220,7 +235,15 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		return
 	}
 
-	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
+	// TODO(sunyijia): update to uncoupled queue version
+	var readyReplicaURL string
+	for count := 0; count <= 120; count++ {
+		readyReplicaURL = lb.loadBalancingPolicy.SelectReplica(&inferRequest)
+		if readyReplicaURL != "" {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
 	if readyReplicaURL == "" {
 		logAndRespondError(c, http.StatusServiceUnavailable, "No ready replicas", nil)
 		return
@@ -411,6 +434,11 @@ func (lb *BaichuanScheduler) handleHealthCheck(c *gin.Context) {
 		logger.Log.Error("No ready replicas available")
 		c.String(http.StatusServiceUnavailable, "No ready replicas available")
 	}
+}
+
+func (lb *BaichuanScheduler) handleMetrics(c *gin.Context) {
+	h := promhttp.Handler()
+	h.ServeHTTP(c.Writer, c.Request)
 }
 
 // formatURL ensures the URL is prefixed with "http://" if not already present.
