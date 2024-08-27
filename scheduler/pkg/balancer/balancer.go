@@ -3,7 +3,6 @@ package balancer
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
-	"github.com/google/uuid"
 
 	"scheduler/scheduler/pkg/config"
 	"scheduler/scheduler/pkg/endpointwatcher"
@@ -183,6 +181,7 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 	balancer.appClient = configureRestyClient(balancer.loadBalancingPolicy, sconfig)
 
 	balancer.appServer.GET("/health", balancer.handleHealthCheck)
+	balancer.appServer.Any("/", balancer.handleRequest)
 	balancer.appServer.Any("/generate", balancer.handleRequest)
 	balancer.appServer.Any("/generate_stream", balancer.handleRequest)
 
@@ -207,17 +206,13 @@ func (lb *BaichuanScheduler) syncReplicas() {
 
 // handleRequest manages incoming requests by proxying them to service replicas.
 func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
+	session_id := c.GetHeader("SESSION_ID")
+	request_id := c.GetHeader("REQUEST_ID")
+
 	inferRequest := types.InferRequest{
-		RequestID: uuid.New().String(),
-	}
-
-	// Read the original body
-	bodyBytes, _ := io.ReadAll(c.Request.Body)
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-	if err := json.NewDecoder(c.Request.Body).Decode(&inferRequest.Body); err != nil {
-		logAndRespondError(c, http.StatusBadRequest, "Invalid request body", err)
-		return
+		// TODO(sunyijia): get request_id from header
+		RequestID: request_id,
+		SessionID: session_id,
 	}
 
 	readyReplicaURL := lb.loadBalancingPolicy.SelectReplica(&inferRequest)
@@ -232,7 +227,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	restyRequest := lb.appClient.R().
 		EnableTrace().
 		SetDoNotParseResponse(true).
-		SetBody(bodyBytes).
+		SetBody(c.Request.Body).
 		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
 
 	// Copy headers

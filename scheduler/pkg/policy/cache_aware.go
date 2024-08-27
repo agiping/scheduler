@@ -92,25 +92,17 @@ func (cp *CacheAwarePolicy) updatePodSet(removedPod *types.Pod) {
 }
 
 func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
-	// TODO(Ping Zhang): Abstract out the request validation logic.
-	if request == nil {
-		log.Print("Invalid request body: nil")
-		return ""
-	}
-
-	requestBody := request.Body
-
 	var selectedPod *types.Pod
 	var requestType string
 	cp.PoLock.RLock()
-	if requestBody.StructInput.SessionID == "" {
+	if request.SessionID == "" {
 		// Stateless request handling
 		requestType = "STATELESS"
 		selectedPod = cp.selectReplicaForStateless()
 	} else {
 		// Stateful request handling with session cache
 		requestType = "STATEFUL"
-		selectedPod = cp.selectReplicaForStateful(requestBody.StructInput.SessionID)
+		selectedPod = cp.selectReplicaForStateful(request.SessionID)
 	}
 	cp.PoLock.RUnlock()
 
@@ -120,7 +112,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 
 	selectedPod.NumberOfRequests++
 	// TODO (Ping Zhang): Only record requestsID to avoid printing sensitive information and large request body.
-	log.Printf("Selected replica %s for [%s] request %v", selectedPod.IP, requestType, requestBody)
+	log.Printf("Selected replica %s for [%s] request %s", selectedPod.IP, requestType, request.RequestID)
 	return selectedPod.IP
 }
 
