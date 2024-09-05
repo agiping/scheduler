@@ -19,6 +19,7 @@ import (
 func WatchEndpoints(cfg *config.SchedulerConfig) {
 	namespace := cfg.Namespace
 	serviceName := cfg.ServiceName
+	logger.Log.Info("WatchEndpoint config, namespace: ", namespace, ", serviceName: ", serviceName)
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
