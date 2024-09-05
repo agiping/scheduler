@@ -420,7 +420,7 @@ func (lb *BaichuanScheduler) traceInfoForDebug(ti resty.TraceInfo) {
 
 func (lb *BaichuanScheduler) handleHealthCheck(c *gin.Context) {
 	c.Header("Content-Type", "text/plain")
-	numOfReadyReplicas := len(lb.loadBalancingPolicy.GetStringReadyReplicas())
+	numOfReadyReplicas := len(lb.loadBalancingPolicy.GetReadyReplicas())
 	if numOfReadyReplicas > 0 {
 		c.String(http.StatusOK, "OK")
 	} else {
