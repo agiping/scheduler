@@ -229,6 +229,17 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		SessionID: session_id,
 	}
 
+	// adapted to scale to zero, when none ready replica, wait to scale up
+	for count := 0; count <= 1200; count++ {
+		readyReplicas := lb.loadBalancingPolicy.GetReadyReplicas()
+		if len(readyReplicas) != 0 {
+			logger.Log.Debug("There's ", len(readyReplicas), " ready replicas.")
+			break
+		}
+		logger.Log.Debug("None ready replicas. Wait to scale up.")
+		time.Sleep(1 * time.Second)
+	}
+
 	var readyReplicaURL string
 	for count := 0; count <= 120; count++ {
 		readyReplicaURL = lb.loadBalancingPolicy.SelectReplica(&inferRequest)
