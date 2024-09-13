@@ -101,8 +101,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 		selectedPod = cp.selectReplicaForStateless()
 	} else {
 		// Stateful request handling with session cache
-		requestType = "STATEFUL"
-		selectedPod = cp.selectReplicaForStateful(request.SessionID)
+		selectedPod, requestType = cp.selectReplicaForStateful(request.SessionID)
 	}
 	cp.PoLock.RUnlock()
 
@@ -112,7 +111,7 @@ func (cp *CacheAwarePolicy) SelectReplica(request *types.InferRequest) string {
 
 	selectedPod.NumberOfRequests++
 	// TODO (Ping Zhang): Only record requestsID to avoid printing sensitive information and large request body.
-	log.Printf("Selected replica %s for [%s] request %s", selectedPod.IP, requestType, request.RequestID)
+	logger.Log.Info("Selected replica ", selectedPod.IP, " for [", requestType, "] request ", request.RequestID, ", session_id: ", request.SessionID)
 	return selectedPod.IP
 }
 
@@ -144,14 +143,14 @@ func (cp *CacheAwarePolicy) selectReplicaForStateless() *types.Pod {
 	if minPod == nil {
 		// TODO(Ping Zhang): Trigger a event for scale up.
 		// Reminder: Avoid repeated scale up events.
-		log.Print("All pods are overloaded, We may proactively trigger a event for autoscaler to scale up.")
+		logger.Log.Warn("All pods are overloaded, We may proactively trigger a event for autoscaler to scale up.")
 		minPod = findMinPod(cp.ReadyReplicas)
 	}
 
 	return minPod
 }
 
-func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *types.Pod {
+func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) (*types.Pod, string) {
 	pods, exists := cp.PodSet[sessionID]
 	if !exists || len(pods) == 0 {
 		minPod := cp.selectReplicaForStateless()
@@ -159,13 +158,13 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *types.Po
 		cp.PodSet[sessionID] = []*types.Pod{minPod}
 		// Update last modified timestamp for this sessionID
 		cp.LastModified[sessionID] = time.Now()
-		return minPod
+		return minPod, "STATEFUL-First"
 	}
 
 	minPod := findMinPod(pods)
 	maxPod := findMaxPod(pods)
 
-	log.Printf("minPod: %v, maxPod: %v", minPod, maxPod)
+	logger.Log.Debug("minPod: ", minPod, ", maxPod: ", maxPod)
 
 	/**
 	 * Overload Prevention: Identifies high load in pods of PodSet[sessionID].
@@ -189,7 +188,7 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *types.Po
 	if minPod.TgiQueueSize >= QHigh {
 		globalMinPod := findMinPod(cp.ReadyReplicas)
 		if globalMinPod.IP != minPod.IP {
-			log.Printf("Replicating cache for session %s from %v to %v",
+			logger.Log.Infof("Replicating cache for session %s from %v to %v",
 				sessionID,
 				cp.PodSet[sessionID],
 				globalMinPod)
@@ -202,7 +201,7 @@ func (cp *CacheAwarePolicy) selectReplicaForStateful(sessionID string) *types.Po
 	// Shrink the PodSet if needed
 	cp.shrinkCacheReplicationIfNeeded(sessionID, maxPod)
 
-	return minPod
+	return minPod, "STATEFUL"
 }
 
 // shrinkCacheReplicationIfNeeded performs necessary shrinking of the PodSet.

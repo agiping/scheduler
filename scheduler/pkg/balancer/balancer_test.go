@@ -382,7 +382,7 @@ func TestLogAndRespondError(t *testing.T) {
 
 	// Call with an error
 	err := errors.New("test error")
-	logAndRespondError(c, http.StatusInternalServerError, "An error occurred", err)
+	logAndRespondError(c, http.StatusInternalServerError, "An error occurred", err, "request_idxxx")
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Equal(t, `{"error":"An error occurred: test error"}`, w.Body.String())
@@ -390,7 +390,7 @@ func TestLogAndRespondError(t *testing.T) {
 	// Call without an error
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
-	logAndRespondError(c, http.StatusServiceUnavailable, "An error occurred", nil)
+	logAndRespondError(c, http.StatusServiceUnavailable, "An error occurred", nil, "request_idxxx")
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Equal(t, `{"error":"An error occurred"}`, w.Body.String())

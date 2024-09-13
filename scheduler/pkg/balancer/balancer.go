@@ -229,14 +229,16 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		SessionID: session_id,
 	}
 
+	logger.Log.Info("Received request, session_id: ", session_id, ", reqeust_id: ", request_id)
+
 	// adapted to scale to zero, when none ready replica, wait to scale up
 	for count := 0; count <= 1200; count++ {
 		readyReplicas := lb.loadBalancingPolicy.GetReadyReplicas()
 		if len(readyReplicas) != 0 {
-			logger.Log.Debug("There's ", len(readyReplicas), " ready replicas.")
+			logger.Log.Debugf("There's %d ready replicas. request_id: %s", len(readyReplicas), request_id)
 			break
 		}
-		logger.Log.Debug("None ready replicas. Wait to scale up.")
+		logger.Log.Debugf("None ready replicas. Wait to scale up. request_id: %s", request_id)
 		time.Sleep(1 * time.Second)
 	}
 
@@ -249,7 +251,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		time.Sleep(1 * time.Second)
 	}
 	if readyReplicaURL == "" {
-		logAndRespondError(c, http.StatusServiceUnavailable, "No ready replicas", nil)
+		logAndRespondError(c, http.StatusServiceUnavailable, "No ready replicas", nil, request_id)
 		return
 	}
 
@@ -269,10 +271,10 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		}
 	}
 
-	logger.Log.Infof("Proxying request to %s", targetURL)
+	logger.Log.Infof("Proxying request to %s, request_id: %s, session_id: %s", targetURL, request_id, session_id)
 	resp, err := restyRequest.Execute(c.Request.Method, targetURL)
 	if resp == nil {
-		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
+		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err, request_id)
 		return
 	}
 	/***
@@ -284,7 +286,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 
 	if err != nil || !resp.IsSuccess() {
 		logger.Log.Errorf("Failed to proxy request, status code: %s", resp.Status())
-		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err)
+		logAndRespondError(c, http.StatusInternalServerError, "Failed to proxy request", err, request_id)
 		return
 	}
 
@@ -301,7 +303,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		// Create a flusher
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {
-			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", errors.New("response writer does not support flushing"))
+			logAndRespondError(c, http.StatusInternalServerError, "Failed to stream proxied response", errors.New("response writer does not support flushing"), request_id)
 			return
 		}
 
@@ -312,31 +314,31 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 			if n > 0 {
 				_, writeErr := c.Writer.Write(buf[:n])
 				if writeErr != nil {
-					logAndRespondError(c, http.StatusInternalServerError, "Failed to write proxied response", writeErr)
+					logAndRespondError(c, http.StatusInternalServerError, "Failed to write proxied response", writeErr, request_id)
 					return
 				}
 				flusher.Flush() // Flush the buffer to the client
 			}
 			if err != nil {
 				if err != io.EOF {
-					logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
+					logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err, request_id)
 					return
 				}
 				break
 			}
 		}
-		logger.Log.Infof("Streamed response to client successfully, statuscode: %d", resp.StatusCode())
+		logger.Log.Infof("Streamed response to client successfully, statuscode: %d, request_id: %s", resp.StatusCode(), request_id)
 	} else {
 		// For non-stream, read all and then send
 		var responseBytes bytes.Buffer
 		_, err := io.Copy(&responseBytes, rawBody)
 		if err != nil {
-			logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err)
+			logAndRespondError(c, http.StatusInternalServerError, "Failed to read proxied response", err, request_id)
 			return
 		}
 
 		c.Data(resp.StatusCode(), resp.Header().Get("Content-Type"), responseBytes.Bytes())
-		logger.Log.Infof("Sent response to client successfully, statuscode: %d", resp.StatusCode())
+		logger.Log.Infof("Sent response to client successfully, statuscode: %d, request_id: %s", resp.StatusCode(), request_id)
 	}
 }
 
@@ -454,12 +456,12 @@ func formatURL(baseURL, path string) string {
 }
 
 // logAndRespondError logs the error and sends a JSON response with the specified status and error message.
-func logAndRespondError(c *gin.Context, status int, message string, err error) {
+func logAndRespondError(c *gin.Context, status int, message string, err error, request_id string) {
 	if err != nil {
-		logger.Log.Errorf("%s: %v", message, err)
+		logger.Log.Errorf("%s: %v, request_id: %s", message, err, request_id)
 		c.JSON(status, gin.H{"error": message + ": " + err.Error()})
 	} else {
-		logger.Log.Error(message)
+		logger.Log.Errorf("%s, request_id: %s", message, request_id)
 		c.JSON(status, gin.H{"error": message})
 	}
 }
