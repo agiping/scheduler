@@ -229,7 +229,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		SessionID: session_id,
 	}
 
-	logger.Log.Info("Received request, session_id: ", session_id, ", reqeust_id: ", request_id)
+	logger.Log.Info("Received request, session_id: ", session_id, ", request_id: ", request_id)
 
 	// adapted to scale to zero, when none ready replica, wait to scale up
 	for count := 0; count <= 1200; count++ {
