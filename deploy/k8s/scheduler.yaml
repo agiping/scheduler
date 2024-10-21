@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: bc-scheduler-account
-  namespace: inference-service
+  name: bc-scheduler-account-test
+  namespace: inference-service-test
 ---
 # Baichuan Scheduler Role: minimal permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: bc-scheduler-role
-  namespace: inference-service
+  namespace: inference-service-test
 rules:
 - apiGroups: [""]
   resources:  ["endpoints"]
@@ -21,32 +21,32 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: bc-scheduler-rolebinding
-  namespace: inference-service
+  namespace: inference-service-test
 subjects:
 - kind: ServiceAccount
   name: bc-scheduler-account
-  namespace: inference-service
+  namespace: inference-service-test
 roleRef:
   kind: Role
-  name: bc-scheduler-role
+  name: bc-scheduler-account-test
   apiGroup: rbac.authorization.k8s.io
 ---
 # Baichuan Scheduler Deployment.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bc-scheduler
+  name: bc-scheduler-rlength
   labels:
-    app: bc-scheduler
+    app: bc-scheduler-rlength
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: bc-scheduler
+      app: bc-scheduler-rlength
   template:
     metadata:
       labels:
-        app: bc-scheduler
+        app: bc-scheduler-rlength
     spec:
       serviceAccountName: bc-scheduler-account
       affinity:
@@ -69,11 +69,11 @@ spec:
         image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.1.0
         resources:
           requests:
-            memory: "10Gi"
-            cpu: "5"
+            memory: "1Gi"
+            cpu: "1"
           limits:
-            memory: "20Gi"
-            cpu: "10"
+            memory: "1Gi"
+            cpu: "1"
         imagePullPolicy: IfNotPresent
         command: ["./bcScheduler"]
         args: 
@@ -84,7 +84,7 @@ spec:
             exec:
               command:
               - sleep
-              - "105"
+              - "0" # for testing
         ports:
         - containerPort: 8890
         livenessProbe:
@@ -112,12 +112,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: bc-scheduler
+  name: bc-scheduler-rlength
   labels:
-    app: bc-scheduler
+    app: bc-scheduler-rlength
 spec:
   selector:
-    app: bc-scheduler
+    app: bc-scheduler-rlength
   ports:
   - protocol: TCP
     port: 8890
@@ -128,7 +128,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: bc-scheduler
+  name: bc-scheduler-rlength
   annotations:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "10" # in seconds
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # in seconds
@@ -138,23 +138,23 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: chat-bc-scheduler.test.ppio.bc-inner.com
+  - host: chat-bc-scheduler-rlength.test.ppio.bc-inner.com
     http:
       paths:
       - path: /
         pathType: ImplementationSpecific
         backend:
           service:
-            name: bc-scheduler
+            name: bc-scheduler-rlength
             port:
               number: 8890
-  - host: chat-bc-scheduler.test.inference.proxy.bc-inner.com
+  - host: chat-bc-scheduler-rlength.test.inference.proxy.bc-inner.com
     http:
       paths:
       - path: /
         pathType: ImplementationSpecific
         backend:
           service:
-            name: bc-scheduler
+            name: bc-scheduler-rlength
             port:
               number: 8890
