@@ -2,14 +2,14 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: bc-scheduler-account-test
+  name: bc-scheduler-rlength-account
   namespace: inference-service-test
 ---
 # Baichuan Scheduler Role: minimal permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: bc-scheduler-role
+  name: bc-scheduler-rlength-role
   namespace: inference-service-test
 rules:
 - apiGroups: [""]
@@ -20,15 +20,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: bc-scheduler-rolebinding
+  name: bc-scheduler-rlength-rolebinding
   namespace: inference-service-test
 subjects:
 - kind: ServiceAccount
-  name: bc-scheduler-account
+  name: bc-scheduler-rlength-account
   namespace: inference-service-test
 roleRef:
   kind: Role
-  name: bc-scheduler-account-test
+  name: bc-scheduler-rlength-role
   apiGroup: rbac.authorization.k8s.io
 ---
 # Baichuan Scheduler Deployment.
@@ -48,7 +48,7 @@ spec:
       labels:
         app: bc-scheduler-rlength
     spec:
-      serviceAccountName: bc-scheduler-account
+      serviceAccountName: bc-scheduler-rlength-account
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -59,13 +59,13 @@ spec:
                     - key: app
                       operator: In
                       values:
-                        - bc-scheduler
+                        - bc-scheduler-rlength
                 topologyKey: kubernetes.io/hostname
       imagePullSecrets:
           - name: baichuan-inference-service
       terminationGracePeriodSeconds: 120
       containers:
-      - name: bc-scheduler
+      - name: bc-scheduler-rlength
         image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.1.0
         resources:
           requests:

@@ -1,4 +1,4 @@
-FROM baichuan-cr-registry-vpc.cn-beijing.cr.aliyuncs.com/devops/golang:1.22 as builder
+FROM golang:1.23 as builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o bcScheduler ./scheduler/cmd/scheduler/main.go
 
 # choose a lightweight base image
-FROM baichuan-cr-registry-vpc.cn-beijing.cr.aliyuncs.com/devops/alpine:3.18
+FROM ubuntu:22.04
 
 COPY --from=builder /app/bcScheduler .
 
