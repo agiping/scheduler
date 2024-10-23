@@ -124,7 +124,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 	inferRequest := types.InferRequest{
 		RequestID: "123",
 	}
-	restyRequest.SetContext(context.WithValue(restyRequest.Context(), "inferRequestID", inferRequest.RequestID))
+	restyRequest.SetContext(context.WithValue(restyRequest.Context(), contextKey("inferRequestID"), inferRequest.RequestID))
 
 	path := "/generate"
 
@@ -163,7 +163,7 @@ func TestConfigureRestyClient_Retry(t *testing.T) {
 
 	pod = scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
 	url = "http://" + pod + path
-	resp, err = restyRequest.Execute("POST", url)
+	resp, _ = restyRequest.Execute("POST", url)
 	finalPod = resp.Request.RawRequest.URL.Host
 	assert.Equal(t, resp.StatusCode(), 500)
 	assert.Equal(t, finalPod, "localhost:8891")
@@ -191,7 +191,7 @@ func TestConfigureRestyClient_Retry_No_Replicas_Retry(t *testing.T) {
 	inferRequest := types.InferRequest{
 		RequestID: "123",
 	}
-	restyRequest.SetContext(context.WithValue(restyRequest.Context(), "inferRequestID", inferRequest.RequestID))
+	restyRequest.SetContext(context.WithValue(restyRequest.Context(), contextKey("inferRequestID"), inferRequest.RequestID))
 
 	pod := scheduler.loadBalancingPolicy.SelectReplica(&inferRequest)
 	path := "/generate"
