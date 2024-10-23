@@ -24,6 +24,7 @@ func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 
 // SetReadyReplicas sets the list of available replicas.
 func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
+	// replica format: podip:port
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 

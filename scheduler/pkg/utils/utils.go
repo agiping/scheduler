@@ -10,6 +10,9 @@ import (
 )
 
 var ReadyPodIPsChan = make(chan []string)
+
+// TODO(Ping Zhang): Simplicity above all.
+// To avoid wired concurrent behavior, we might consider using one channel to pass endpoints of one service.
 var ReadyEndpointsChan = make(chan []string)
 
 type MetricsAggregator interface {

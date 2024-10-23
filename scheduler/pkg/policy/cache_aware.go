@@ -39,6 +39,7 @@ func NewCacheAwarePolicy() *CacheAwarePolicy {
 }
 
 func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
+	// replica format: podip:port
 	cp.PoLock.Lock()
 	defer cp.PoLock.Unlock()
 
@@ -227,7 +228,7 @@ func (cp *CacheAwarePolicy) UpdateAfterResponse(podIP string) {
 	defer cp.PoLock.Unlock()
 
 	for _, pod := range cp.ReadyReplicas {
-		if pod.IP == podIP {
+		if pod.IP == podIP && pod.NumberOfRequests > 0 {
 			pod.NumberOfRequests--
 			if pod.RejectStateless && pod.TgiQueueSize < QHigh {
 				pod.RejectStateless = false

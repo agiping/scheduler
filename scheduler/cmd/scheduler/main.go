@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"os"
+	"strings"
 	"time"
 
 	"scheduler/scheduler/pkg/balancer"
@@ -14,13 +16,14 @@ func main() {
 	// log level
 	logLevel := flag.String("log-level", "info", "Log level for the logger. Options: 'info', 'debug', 'warn', 'error'. Default: 'info'.")
 
-	// namespace, serviceName
+	// namespace, serviceNames
 	namespace := flag.String("namespace", "inference-service", "Namespace of the Service-Scheduler. Default: 'inference-service'.")
-	serviceName := flag.String("service-name", "chat-character-lite-online-sky", "Name of the Service. Default: 'chat-character-lite-online-sky'.")
+	serviceNames := flag.String("service-names", "chat-character-lite-2-cards", "Names of the Services. Default: 'chat-character-lite-2-cards'.")
 
 	// schedulerPort, loadBalancerPolicy
 	schedulerPort := flag.Int("load-balancer-port", 8890, "Port on which the load balancer listens. Default: 8890.")
-	loadBalancerPolicy := flag.String("policy", "least-number-of-requests", "Load balancing policy to use. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'. Default: 'least-number-of-requests'.")
+	loadBalancerPolicy := flag.String("policy", "least-number-of-requests", "Load balancing policy to use. Options: 'cache-aware', 'least-number-of-requests', 'round-robin', 'request-length-dispatching'. Default: 'least-number-of-requests'.")
+	requestLengthDispatchingThreshold := flag.Int("request-length-dispatching-threshold", 20000, "Threshold for request length dispatching policy. Default: 20000.")
 
 	// retry policy
 	enableRetry := flag.Bool("enable-retry", true, "Enable or disable retry mechanism")
@@ -39,6 +42,15 @@ func main() {
 	// Initialize the logger
 	logger.Init(*logLevel)
 
+	// Parse the service names
+	multipleServiceNames := strings.Split(*serviceNames, ",")
+	numOfServices := len(multipleServiceNames)
+
+	if numOfServices == 0 {
+		logger.Log.Error("Service names must be specified")
+		os.Exit(1)
+	}
+
 	// Validate the load balancer port
 	if *schedulerPort <= 0 || *schedulerPort > 65535 {
 		logger.Log.Error("Load balancer port must be specified in the valid range, e.g., [1, 65535]")
@@ -50,20 +62,30 @@ func main() {
 	// Validate the configuration of load balancing policy
 	// Set of valid load balancing policies
 	validPolicies := map[string]bool{
-		"cache-aware":              true,
-		"least-number-of-requests": true,
-		"round-robin":              true,
+		"cache-aware":                true,
+		"least-number-of-requests":   true,
+		"round-robin":                true,
+		"request-length-dispatching": true,
 	}
 
 	if !validPolicies[*loadBalancerPolicy] {
-		logger.Log.Error("Invalid load balancing policy. Options: 'cache-aware', 'least-number-of-requests', 'round-robin'.")
+		logger.Log.Error("Invalid load balancing policy. Options: 'cache-aware', 'least-number-of-requests', 'round-robin', 'request-length-dispatching'.")
 		// fallback to default policy when mis-confgured
 		logger.Log.Warn("Falling back to default policy 'least-number-of-requests'")
 		*loadBalancerPolicy = "least-number-of-requests"
 	}
 
+	// Simplicity above all
+	switch {
+	case numOfServices > 1 && *loadBalancerPolicy != "request-length-dispatching":
+		logger.Log.Error("For multiple services, only 'request-length-dispatching' policy is supported")
+		os.Exit(1)
+	case *loadBalancerPolicy == "request-length-dispatching" && numOfServices == 1:
+		logger.Log.Error("For single service, 'request-length-dispatching' policy is currently not supported")
+		os.Exit(1)
+	}
+
 	// Parse the retry status code
-	codes := []int{}
 	codes, err := utils.ParseRetryStatusCodes(*retriableStatusCodes)
 	if err != nil || len(codes) == 0 {
 		logger.Log.Errorf("Error parsing retriable status codes: %v", err)
@@ -92,12 +114,14 @@ func main() {
 	}
 
 	schedulerConfig := &config.SchedulerConfig{
-		LBPort:        *schedulerPort,
-		LBPolicy:      *loadBalancerPolicy,
-		Namespace:     *namespace,
-		ServiceName:   *serviceName,
-		RetryPolicy:   *retryPolicy,
-		TimeoutPolicy: *timeoutPolicy,
+		LBPort:                            *schedulerPort,
+		LBPolicy:                          *loadBalancerPolicy,
+		Namespace:                         *namespace,
+		ServiceNames:                      multipleServiceNames,
+		NumOfServices:                     numOfServices,
+		RetryPolicy:                       *retryPolicy,
+		TimeoutPolicy:                     *timeoutPolicy,
+		RequestLengthDispatchingThreshold: *requestLengthDispatchingThreshold,
 	}
 
 	lb := balancer.NewBaichuanScheduler(schedulerConfig)

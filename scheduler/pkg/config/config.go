@@ -6,12 +6,14 @@ var DefaultRetryCodes = []int{500, 502, 503, 504}
 
 // A placeholder for scheduler configuration.
 type SchedulerConfig struct {
-	LBPort        int
-	LBPolicy      string
-	Namespace     string
-	ServiceName   string
-	RetryPolicy   RetryPolicy
-	TimeoutPolicy TimeoutPolicy
+	LBPort                            int
+	LBPolicy                          string
+	Namespace                         string
+	ServiceNames                      []string
+	NumOfServices                     int
+	RetryPolicy                       RetryPolicy
+	TimeoutPolicy                     TimeoutPolicy
+	RequestLengthDispatchingThreshold int
 }
 
 type RetryPolicy struct {

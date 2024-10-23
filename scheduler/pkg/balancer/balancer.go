@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,9 @@ const (
 	// The maximum number of idle connections in the client pool.
 	MaxIdleConnsInClientPool = 200
 )
+
+// Define a custom type for context keys
+type contextKey string
 
 // LoadBalancer structure for controlling proxying of endpoint replicas
 type BaichuanScheduler struct {
@@ -188,6 +192,9 @@ func NewBaichuanScheduler(sconfig *config.SchedulerConfig) *BaichuanScheduler {
 		balancer.loadBalancingPolicy = policy.NewRoundRobinPolicy()
 	case "cache-aware":
 		balancer.loadBalancingPolicy = policy.NewCacheAwarePolicy()
+	case "request-length-dispatching":
+		balancer.loadBalancingPolicy = policy.NewRequestLengthDispatchingPolicy(sconfig.RequestLengthDispatchingThreshold)
+
 	}
 
 	// Create and configure resty client
@@ -222,13 +229,32 @@ func (lb *BaichuanScheduler) syncReplicas() {
 func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	session_id := c.GetHeader("SESSION_ID")
 	request_id := c.GetHeader("REQUEST_ID")
+
+	// Get the prompt length from the header
+	promptLengthStr := c.GetHeader("PROMPT_LENGTH")
+	var promptLength int
+	if promptLengthStr == "" {
+		logger.Log.Warn("Prompt length is not provided")
+		promptLength = 0
+	} else {
+		var err error
+		promptLength, err = strconv.Atoi(promptLengthStr)
+		if err != nil {
+			logger.Log.Warn("Prompt length is not a valid integer")
+			promptLength = 0
+		}
+	}
+
+	logger.Log.Infof("The estimated prompt length is %d", promptLength)
+
 	// add request counts and update metrics
 	lb.request_total.Inc()
 
 	inferRequest := types.InferRequest{
 		// TODO(sunyijia): get request_id from header
-		RequestID: request_id,
-		SessionID: session_id,
+		RequestID:    request_id,
+		SessionID:    session_id,
+		PromptLength: promptLength,
 	}
 
 	logger.Log.Info("Received request, session_id: ", session_id, ", request_id: ", request_id)
@@ -264,7 +290,7 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		EnableTrace().
 		SetDoNotParseResponse(true).
 		SetBody(c.Request.Body).
-		SetContext(context.WithValue(c, "inferRequestID", inferRequest.RequestID)) // Save for retry
+		SetContext(context.WithValue(c, contextKey("inferRequestID"), inferRequest.RequestID)) // Save for retry
 
 	// Copy headers
 	for key, values := range c.Request.Header {
