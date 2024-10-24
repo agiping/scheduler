@@ -220,7 +220,6 @@ func (lb *BaichuanScheduler) syncReplicas() {
 		select {
 		case ReadyEndpoints := <-utils.ReadyEndpointsChan:
 			logger.Log.Debugf("Received ready replicas: %v", ReadyEndpoints)
-			logger.Log.Infof("Received ready replicas count: %d", len(ReadyEndpoints))
 			lb.loadBalancingPolicy.SetReadyReplicas(ReadyEndpoints)
 			lb.loadBalancingPolicy.PrintNumberOfRequests()
 		case <-ticker.C:
@@ -231,6 +230,10 @@ func (lb *BaichuanScheduler) syncReplicas() {
 
 // handleRequest manages incoming requests by proxying them to service replicas.
 func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
+	// debugging...
+	headers := c.Request.Header
+	logger.Log.Infof("Headers: %v", headers)
+
 	session_id := c.GetHeader("SESSION_ID")
 	request_id := c.GetHeader("REQUEST_ID")
 
