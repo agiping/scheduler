@@ -10,7 +10,7 @@ import (
 	"scheduler/scheduler/pkg/types"
 )
 
-func TestRequestLengthDispatchingPolicy_SetReadyReplicas(t *testing.T) {
+func TestSetReadyReplicas(t *testing.T) {
 	policy := NewRequestLengthDispatchingPolicy(20000)
 
 	// Initial replicas
@@ -174,4 +174,53 @@ func TestSelectReplica_MultipleReplicas(t *testing.T) {
 	}
 	selectedReplica = policy.SelectReplica(request)
 	assert.Equal(t, "10.0.0.13:8080", selectedReplica)
+}
+
+func TestUpdateAfterResponse(t *testing.T) {
+	logger.Init("info")
+	policy := NewRequestLengthDispatchingPolicy(100)
+	policy.ReadyReplicas = []*types.Pod{
+		createPod("10.0.0.15:8080", "2-cards-service", 2),
+		createPod("10.0.0.16:8080", "2-cards-service", 3),
+		createPod("10.0.0.17:8080", "4-cards-service", 2),
+	}
+	request := &types.InferRequest{RequestID: "req-9", PromptLength: 50}
+	selectedReplica := policy.SelectReplica(request)
+	assert.Equal(t, "10.0.0.15:8080", selectedReplica)
+
+	policy.UpdateAfterResponse(selectedReplica)
+
+	assert.Equal(t, 3, len(policy.ReadyReplicas))
+	assert.Equal(t, "10.0.0.15:8080", policy.ReadyReplicas[0].IP)
+	assert.Equal(t, 2, policy.ReadyReplicas[0].NumberOfRequests)
+
+	expectedNumberOfRequests := []int{2, 3, 2}
+	for i, pod := range policy.ReadyReplicas {
+		assert.Equal(t, expectedNumberOfRequests[i], pod.NumberOfRequests)
+	}
+}
+
+func TestSelectReplicaForRetry(t *testing.T) {
+	logger.Init("info")
+	policy := NewRequestLengthDispatchingPolicy(100)
+	policy.ReadyReplicas = []*types.Pod{
+		createPod("10.0.0.18:8080", "2-cards-service", 2),
+		createPod("10.0.0.19:8080", "2-cards-service", 3),
+		createPod("10.0.0.20:8080", "4-cards-service", 2),
+	}
+	request := &types.InferRequest{RequestID: "req-10", PromptLength: 50}
+	selectedReplica := policy.SelectReplica(request)
+	assert.Equal(t, "10.0.0.18:8080", selectedReplica)
+
+	selectedReplicaForRetry := policy.SelectReplicaForRetry("req-10", 50, "10.0.0.18:8080")
+	assert.Equal(t, "10.0.0.19:8080", selectedReplicaForRetry)
+
+	policy.ReadyReplicas = []*types.Pod{
+		createPod("10.0.0.21:8080", "2-cards-service", 24),
+		createPod("10.0.0.22:8080", "2-cards-service", 25),
+		createPod("10.0.0.23:8080", "4-cards-service", 2),
+	}
+
+	selectedReplicaForRetry = policy.SelectReplicaForRetry("req-10", 50, "10.0.0.21:8080")
+	assert.Equal(t, "10.0.0.23:8080", selectedReplicaForRetry)
 }

@@ -68,7 +68,7 @@ func (p *LeastNumberOfRequestsPolicy) SelectReplica(request *types.InferRequest)
 	return selectedReplica
 }
 
-func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(requestID, currentReplica string) string {
+func (p *LeastNumberOfRequestsPolicy) SelectReplicaForRetry(requestID string, promptLength int, currentReplica string) string {
 	if len(p.ReadyReplicas) == 0 {
 		logger.Log.Warnf("No replicas available for retry requestID: %s", requestID)
 		return ""

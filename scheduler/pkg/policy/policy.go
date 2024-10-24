@@ -13,7 +13,7 @@ type LoadBalancingPolicy interface {
 	GetStringReadyReplicas() []string
 	SetReadyReplicas([]string)
 	SelectReplica(*types.InferRequest) string
-	SelectReplicaForRetry(string, string) string
+	SelectReplicaForRetry(string, int, string) string
 	UpdateAfterResponse(string)
 	UpdateTgiQueueSize(*sync.Map)
 	GetPolicyName() string

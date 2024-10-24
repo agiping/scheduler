@@ -7,6 +7,9 @@ import (
 	"sync"
 )
 
+// max int value
+const MaxInt = int(^uint(0) >> 1)
+
 // We have some established norms for the request length dispatching policy.
 const SmallTgiModel = "2-cards"
 const LargeTgiModel = "4-cards"
@@ -71,34 +74,39 @@ func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas []string) {
 }
 
 func (p *RequestLengthDispatchingPolicy) SelectReplica(request *types.InferRequest) string {
-	p.PolicyLock.RLock()
-	defer p.PolicyLock.RUnlock()
+	p.PolicyLock.Lock()
+	defer p.PolicyLock.Unlock()
 
 	if len(p.ReadyReplicas) == 0 {
 		logger.Log.Warnf("No replicas available for request %v", request)
 		return ""
 	}
 
-	var selectedReplica *types.Pod
-	minCost := int(^uint(0) >> 1) // max int value
-	inputLength := request.PromptLength
-
-	for _, replica := range p.ReadyReplicas {
-		cost := p.computeCost(inputLength, replica)
-		if cost < minCost {
-			selectedReplica = replica
-			minCost = cost
-		}
-	}
-	logger.Log.Infof("current min cost: %d", minCost)
+	selectedReplica := p.selectBestReplica("", request.PromptLength)
 	selectedReplica.NumberOfRequests++
 	logger.Log.Infof("Selected replica %s for request %s", selectedReplica.IP, request.RequestID)
-	// p.PrintNumberOfRequests()
 	return selectedReplica.IP
 }
 
-func (p *RequestLengthDispatchingPolicy) SelectReplicaForRetry(requestID, currentReplica string) string {
-	return "Not implemented yet"
+func (p *RequestLengthDispatchingPolicy) SelectReplicaForRetry(requestID string, promptLength int, currentReplica string) string {
+	p.PolicyLock.Lock()
+	defer p.PolicyLock.Unlock()
+
+	if len(p.ReadyReplicas) == 0 {
+		logger.Log.Warnf("No replicas available for retry request %s", requestID)
+		return ""
+	}
+
+	selectedReplica := p.selectBestReplica(currentReplica, promptLength)
+
+	if selectedReplica == nil {
+		logger.Log.Warnf("No replicas available for retry request %s", requestID)
+		return ""
+	}
+
+	selectedReplica.NumberOfRequests++
+	logger.Log.Infof("Selected replica %s for retry request %s", selectedReplica.IP, requestID)
+	return selectedReplica.IP
 }
 
 func (p *RequestLengthDispatchingPolicy) UpdateAfterResponse(replica string) {
@@ -132,6 +140,26 @@ func (p *RequestLengthDispatchingPolicy) GetNumberOfRequests() map[string]int {
 
 func (p *RequestLengthDispatchingPolicy) GetLock() sync.Locker {
 	return &p.PolicyLock
+}
+
+func (p *RequestLengthDispatchingPolicy) selectBestReplica(excludeReplica string, promptLength int) *types.Pod {
+	var selectedReplica *types.Pod
+	minCost := MaxInt
+
+	for _, replica := range p.ReadyReplicas {
+		if excludeReplica != "" && replica.IP == excludeReplica {
+			continue
+		}
+		cost := p.computeCost(promptLength, replica)
+		if cost < minCost {
+			selectedReplica = replica
+			minCost = cost
+		}
+	}
+
+	logger.Log.Infof("current min cost: %d", minCost)
+
+	return selectedReplica
 }
 
 /*

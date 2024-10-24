@@ -112,7 +112,10 @@ func configureRestyClient(lbpolicy policy.LoadBalancingPolicy, sconfig *config.S
 				logger.Log.Infof("retring Request: %s", inferRequestID)
 				logger.Log.Infof("The original replica URL is %s, path is %s", oldReplica, reqPath)
 
-				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, oldReplica)
+				promptLength, _ := req.Context().Value("promptLength").(int)
+				logger.Log.Infof("The prompt length of retry request is %d", promptLength)
+
+				newURL := lbpolicy.SelectReplicaForRetry(inferRequestID, promptLength, oldReplica)
 				if newURL == "" {
 					logger.Log.Warn("Retry Error: No ready replicas for retry")
 					return errors.New("NoNewReplicasForRetry")
@@ -290,7 +293,8 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 		EnableTrace().
 		SetDoNotParseResponse(true).
 		SetBody(c.Request.Body).
-		SetContext(context.WithValue(c, contextKey("inferRequestID"), inferRequest.RequestID)) // Save for retry
+		SetContext(context.WithValue(c, contextKey("inferRequestID"), inferRequest.RequestID)). // Save for retry
+		SetContext(context.WithValue(c, contextKey("promptLength"), inferRequest.PromptLength)) // Save for request length dispatching
 
 	// Copy headers
 	for key, values := range c.Request.Header {
