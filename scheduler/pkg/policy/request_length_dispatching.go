@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"regexp"
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
 	"strings"
@@ -13,6 +14,9 @@ const MaxInt = int(^uint(0) >> 1)
 // We have some established norms for the request length dispatching policy.
 const SmallTgiModel = "2-cards"
 const LargeTgiModel = "4-cards"
+
+// instance format: serviceName-podip:port; e.g. chat-service-2-cards-10.0.0.1:80
+var InstanceRegex = regexp.MustCompile(`^(.+)-(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+)$`)
 
 const PenaltyForShortRequestToLargeModel = 10 // P
 const PenaltyForLongRequestToSmallModel = 20  // M
@@ -50,9 +54,13 @@ func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas []string) {
 
 	newReplicaMap := make(map[string]*types.Pod)
 	for _, servicePod := range replicas {
-		replicaSplited := strings.Split(servicePod, "-")
-		serviceName := replicaSplited[0]
-		ipport := replicaSplited[1]
+		match := InstanceRegex.FindStringSubmatch(servicePod)
+		if len(match) != 3 {
+			logger.Log.Errorf("Invalid replica format: %s", servicePod)
+			continue
+		}
+		serviceName := match[1]
+		ipport := match[2]
 		newReplicaMap[ipport] = &types.Pod{IP: ipport, OwnerService: serviceName}
 	}
 
