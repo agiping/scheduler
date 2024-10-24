@@ -42,13 +42,14 @@ func TestSetReadyReplicas(t *testing.T) {
 
 	// Check if replicas are updated correctly
 	readyReplicas := policy.GetReadyReplicas()
-	if len(readyReplicas) != 2 {
-		t.Errorf("Expected 2 replicas, got %d", len(readyReplicas))
+	if len(readyReplicas) != 3 {
+		t.Errorf("Expected 3 replicas, got %d", len(readyReplicas))
 	}
 
 	// Check if the correct replicas are present
 	expectedIPs := map[string]bool{
 		"192.168.1.1:8080": true,
+		"192.168.1.2:8080": true,
 		"192.168.1.3:8080": true,
 	}
 

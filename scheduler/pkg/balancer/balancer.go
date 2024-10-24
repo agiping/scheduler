@@ -430,6 +430,7 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 func (lb *BaichuanScheduler) Run() {
 	go endpointwatcher.WatchEndpoints(lb.schedulerConfig)
 	go lb.syncReplicas()
+	// TODO(Ping Zhang): uncomment this when we combine the cache-aware and request-length-dispatching policy
 	go lb.StartCollectingQueueSize()
 
 	logger.Log.Infof("Baichuan scheduler started on http://0.0.0.0:%d", lb.loadBalancerPort)

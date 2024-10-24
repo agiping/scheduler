@@ -25,17 +25,19 @@ type RequestLengthDispatchingPolicy struct {
 	// TODO(Ping Zhang): We may consider using a more sophisticated policy
 	// to dispatch requests: length-dispatching with cache-aware.
 	// CacheAwarePolicy *CacheAwarePolicy
-	PolicyLock        sync.RWMutex
-	ReadyReplicas     []*types.Pod
-	StringReplicas    []string
-	DispatchThreshold int
+	PolicyLock              sync.RWMutex
+	ReadyReplicas           []*types.Pod            // [pod1, pod2, pod3, pod4...]
+	ReadyReplicasPerService map[string][]*types.Pod // {serviceName1: [pod1, pod2, ...], serviceName2: [pod3, pod4, ...]}
+	StringReplicas          []string
+	DispatchThreshold       int
 }
 
 func NewRequestLengthDispatchingPolicy(dispatchThreshold int) *RequestLengthDispatchingPolicy {
 	return &RequestLengthDispatchingPolicy{
-		ReadyReplicas:     make([]*types.Pod, 0),
-		StringReplicas:    make([]string, 0),
-		DispatchThreshold: dispatchThreshold,
+		ReadyReplicasPerService: make(map[string][]*types.Pod),
+		ReadyReplicas:           make([]*types.Pod, 0),
+		StringReplicas:          make([]string, 0),
+		DispatchThreshold:       dispatchThreshold,
 	}
 }
 
@@ -48,11 +50,13 @@ func (p *RequestLengthDispatchingPolicy) GetStringReadyReplicas() []string {
 }
 
 func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas []string) {
-	// replica format: serviceName-podip:port
 	p.PolicyLock.Lock()
 	defer p.PolicyLock.Unlock()
 
-	newReplicaMap := make(map[string]*types.Pod)
+	// newReplicaMap stores per-service replicas
+	// {serviceName1: {ip1: pod1, ip2: pod2, ...}, serviceName2: {ip3: pod3, ip4: pod4, ...}}
+	newReplicaMap := make(map[string]map[string]*types.Pod)
+
 	for _, servicePod := range replicas {
 		match := InstanceRegex.FindStringSubmatch(servicePod)
 		if len(match) != 3 {
@@ -61,24 +65,40 @@ func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas []string) {
 		}
 		serviceName := match[1]
 		ipport := match[2]
-		newReplicaMap[ipport] = &types.Pod{IP: ipport, OwnerService: serviceName}
-	}
 
-	updatedReplicas := []*types.Pod{}
-	for _, pod := range p.ReadyReplicas {
-		if _, exists := newReplicaMap[pod.IP]; exists {
-			updatedReplicas = append(updatedReplicas, pod)
-			delete(newReplicaMap, pod.IP)
+		if _, exists := newReplicaMap[serviceName]; !exists {
+			newReplicaMap[serviceName] = make(map[string]*types.Pod)
 		}
+		newReplicaMap[serviceName][ipport] = &types.Pod{IP: ipport, OwnerService: serviceName}
 	}
 
-	// Add new replicas scaled up by autoscaler
-	for _, pod := range newReplicaMap {
-		updatedReplicas = append(updatedReplicas, pod)
+	// Handle each service's replicas
+	for serviceName, replicas := range newReplicaMap {
+		replicasOfCurrentService := p.ReadyReplicasPerService[serviceName]
+		updatedReplicasOfCurrentService := make([]*types.Pod, 0)
+
+		for _, pod := range replicasOfCurrentService {
+			if _, exists := replicas[pod.IP]; exists {
+				updatedReplicasOfCurrentService = append(updatedReplicasOfCurrentService, pod)
+				delete(replicas, pod.IP)
+			}
+		}
+
+		// Add new replicas scaled up by autoscaler
+		for _, pod := range replicas {
+			updatedReplicasOfCurrentService = append(updatedReplicasOfCurrentService, pod)
+		}
+
+		// Replace the old slice with the updated one for the current service
+		p.ReadyReplicasPerService[serviceName] = updatedReplicasOfCurrentService
 	}
 
-	// Replace the old slice with the updated one
-	p.ReadyReplicas = updatedReplicas
+	// Update the global ready replicas
+	globalReadyReplicas := make([]*types.Pod, 0)
+	for _, replicas := range p.ReadyReplicasPerService {
+		globalReadyReplicas = append(globalReadyReplicas, replicas...)
+	}
+	p.ReadyReplicas = globalReadyReplicas
 }
 
 func (p *RequestLengthDispatchingPolicy) SelectReplica(request *types.InferRequest) string {
