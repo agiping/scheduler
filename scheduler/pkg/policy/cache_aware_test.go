@@ -2,6 +2,7 @@ package policy
 
 import (
 	"reflect"
+	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
 	"sync"
 	"testing"
@@ -18,7 +19,7 @@ func TestCacheAwarePolicy_SetReadyReplicas(t *testing.T) {
 
 	newReplicas := []string{"2.2.2.2", "3.3.3.3"}
 
-	cp.SetReadyReplicas(newReplicas)
+	cp.SetReadyReplicas(map[string][]string{"service1": newReplicas})
 
 	if len(cp.ReadyReplicas) != 2 {
 		t.Errorf("Expected 2 replicas, got %d", len(cp.ReadyReplicas))
@@ -112,6 +113,7 @@ func TestCacheAwarePolicy_updatePodSet(t *testing.T) {
 }
 
 func TestCacheAwarePolicy_SelectReplicaForStateless(t *testing.T) {
+	logger.Init("info")
 	tests := []struct {
 		name          string
 		readyReplicas []*types.Pod

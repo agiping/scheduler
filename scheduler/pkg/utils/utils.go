@@ -12,8 +12,8 @@ import (
 var ReadyPodIPsChan = make(chan []string)
 
 // TODO(Ping Zhang): Simplicity above all.
-// To avoid wired concurrent behavior, we might consider using one channel to pass endpoints of one service.
-var ReadyEndpointsChan = make(chan []string)
+// {serviceName: [endpoint1, endpoint2, ...]}
+var ReadyEndpointsChan = make(chan map[string][]string)
 
 type MetricsAggregator interface {
 	Add(request *http.Request) // We keep the incoming request here in case we need it for advanced load balancing strategies
@@ -129,4 +129,13 @@ func ParseRetryStatusCodes(codes string) ([]int, error) {
 
 func StartsWithHTTP(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+func GetFirstKeyVaule(m map[string][]string) (string, []string) {
+	for key, value := range m {
+		// single key-value pair
+		return key, value
+	}
+	// if map is empty
+	return "", []string{}
 }

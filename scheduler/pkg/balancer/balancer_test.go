@@ -178,7 +178,7 @@ func TestConfigureRestyClient_Retry_No_Replicas_Retry(t *testing.T) {
 	logger.Init("debug")
 
 	scheduler := NewScheduler(true)
-	scheduler.loadBalancingPolicy.SetReadyReplicas([]string{"localhost:8891"})
+	scheduler.loadBalancingPolicy.SetReadyReplicas(map[string][]string{"service1": {"localhost:8891"}})
 
 	restyRequest := scheduler.
 		appClient.
@@ -227,7 +227,7 @@ func NewScheduler(enableRerty bool) *BaichuanScheduler {
 	}
 
 	sched := NewBaichuanScheduler(sconfig)
-	sched.loadBalancingPolicy.SetReadyReplicas(replicas)
+	sched.loadBalancingPolicy.SetReadyReplicas(map[string][]string{"service1": replicas})
 
 	return sched
 }
@@ -309,7 +309,7 @@ func TestSyncReplicas(t *testing.T) {
 	replicas := []string{"localhost:8891", "localhost:8892"}
 	go scheduler.syncReplicas()
 
-	utils.ReadyEndpointsChan <- replicas
+	utils.ReadyEndpointsChan <- map[string][]string{"service1": replicas}
 	time.Sleep(1 * time.Second)
 	assert.Equal(t, scheduler.loadBalancingPolicy.GetStringReadyReplicas(), replicas)
 }
@@ -354,7 +354,7 @@ func TestHandleRequest(t *testing.T) {
 
 	// generate stream
 	// remove 8891 from the list of ready replicas
-	scheduler.loadBalancingPolicy.SetReadyReplicas([]string{"localhost:8892"})
+	scheduler.loadBalancingPolicy.SetReadyReplicas(map[string][]string{"service1": {"localhost:8892"}})
 	resp, err = client.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(map[string]string{"inputs": "Write a song with code", "name": "ping"}).

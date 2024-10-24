@@ -54,6 +54,7 @@ func WatchEndpoints(cfg *config.SchedulerConfig) {
 func processEvents(watcher watch.Interface, serviceName string, numOfServices int) {
 	defer watcher.Stop()
 	var readyEndpoints []string
+	readyEndpointsPerService := make(map[string][]string)
 	for event := range watcher.ResultChan() {
 		endpoints, ok := event.Object.(*v1.Endpoints)
 		if !ok {
@@ -70,7 +71,8 @@ func processEvents(watcher watch.Interface, serviceName string, numOfServices in
 		}
 		logger.Log.Debugf("Sending ready endpoints for service %s: %v", serviceName, readyEndpoints)
 		logger.Log.Infof("Sending ready endpoints count for service %s: %d", serviceName, len(readyEndpoints))
-		utils.ReadyEndpointsChan <- readyEndpoints
+		readyEndpointsPerService[serviceName] = readyEndpoints
+		utils.ReadyEndpointsChan <- readyEndpointsPerService
 	}
 }
 

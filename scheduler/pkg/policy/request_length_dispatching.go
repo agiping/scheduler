@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 	"strings"
 	"sync"
 )
@@ -55,15 +56,25 @@ func (p *RequestLengthDispatchingPolicy) GetStringReadyReplicas() []string {
 	return p.StringReplicas
 }
 
-func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas []string) {
+func (p *RequestLengthDispatchingPolicy) SetReadyReplicas(replicas map[string][]string) {
 	p.PolicyLock.Lock()
 	defer p.PolicyLock.Unlock()
 
+	serviceName, serviceReplicas := utils.GetFirstKeyVaule(replicas)
+
+	/*
+		We are handling multiple services here. If one of the services has no replicas,
+		i.g., the service is deleted, or the deployment backend has no available replicas,
+		we need to initialize the replica list for that service to empty.
+	*/
+	if len(serviceReplicas) == 0 {
+		p.ReadyReplicasPerService[serviceName] = make([]*types.Pod, 0)
+	}
 	// newReplicaMap stores per-service replicas
 	// {serviceName1: {ip1: pod1, ip2: pod2, ...}, serviceName2: {ip3: pod3, ip4: pod4, ...}}
 	newReplicaMap := make(map[string]map[string]*types.Pod)
 
-	for _, servicePod := range replicas {
+	for _, servicePod := range serviceReplicas {
 		match := InstanceRegex.FindStringSubmatch(servicePod)
 		if len(match) != 3 {
 			logger.Log.Errorf("Invalid replica format: %s", servicePod)

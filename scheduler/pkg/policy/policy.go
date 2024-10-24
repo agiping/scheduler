@@ -11,7 +11,7 @@ type LoadBalancingPolicy interface {
 	GetLock() sync.Locker
 	GetReadyReplicas() []*types.Pod
 	GetStringReadyReplicas() []string
-	SetReadyReplicas([]string)
+	SetReadyReplicas(map[string][]string)
 	SelectReplica(*types.InferRequest) string
 	SelectReplicaForRetry(string, int, string) string
 	UpdateAfterResponse(string)

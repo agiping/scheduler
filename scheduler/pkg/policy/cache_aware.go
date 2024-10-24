@@ -8,6 +8,7 @@ import (
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/metrics"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 )
 
 const (
@@ -38,13 +39,15 @@ func NewCacheAwarePolicy() *CacheAwarePolicy {
 	}
 }
 
-func (cp *CacheAwarePolicy) SetReadyReplicas(replicas []string) {
+func (cp *CacheAwarePolicy) SetReadyReplicas(replicas map[string][]string) {
 	// replica format: podip:port
 	cp.PoLock.Lock()
 	defer cp.PoLock.Unlock()
 
+	_, serviceReplicas := utils.GetFirstKeyVaule(replicas)
+
 	newReplicaMap := make(map[string]*types.Pod)
-	for _, podip := range replicas {
+	for _, podip := range serviceReplicas {
 		newReplicaMap[podip] = &types.Pod{IP: podip}
 	}
 

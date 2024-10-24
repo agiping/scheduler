@@ -8,6 +8,7 @@ import (
 
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 )
 
 // RoundRobinPolicy implements the LoadBalancingPolicy using a round-robin strategy.
@@ -23,17 +24,19 @@ func NewRoundRobinPolicy() *RoundRobinPolicy {
 }
 
 // SetReadyReplicas sets the list of available replicas.
-func (p *RoundRobinPolicy) SetReadyReplicas(replicas []string) {
+func (p *RoundRobinPolicy) SetReadyReplicas(replicas map[string][]string) {
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
+	_, serviceReplicas := utils.GetFirstKeyVaule(replicas)
+
 	// Shuffle replicas to prevent loading the first one too heavily
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(replicas), func(i, j int) {
-		replicas[i], replicas[j] = replicas[j], replicas[i]
+	rand.Shuffle(len(serviceReplicas), func(i, j int) {
+		serviceReplicas[i], serviceReplicas[j] = serviceReplicas[j], serviceReplicas[i]
 	})
 
-	p.ReadyReplicas = replicas
+	p.ReadyReplicas = serviceReplicas
 	p.index = 0
 }
 

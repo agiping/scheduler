@@ -5,6 +5,7 @@ import (
 
 	"scheduler/scheduler/pkg/logger"
 	"scheduler/scheduler/pkg/types"
+	"scheduler/scheduler/pkg/utils"
 )
 
 // LeastNumberOfRequestsPolicy implements the LoadBalancingPolicy using the least number of requests strategy.
@@ -23,14 +24,16 @@ func NewLeastNumberOfRequestsPolicy() *LeastNumberOfRequestsPolicy {
 }
 
 // SetReadyReplicas sets the list of available replicas.
-func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
+func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas map[string][]string) {
 	// replica format: podip:port
 	p.PoLock.Lock()
 	defer p.PoLock.Unlock()
 
 	newConnectionsCount := &sync.Map{}
 
-	for _, replica := range replicas {
+	_, serviceReplicas := utils.GetFirstKeyVaule(replicas)
+
+	for _, replica := range serviceReplicas {
 		if val, ok := p.connectionsCount.Load(replica); ok {
 			newConnectionsCount.Store(replica, val) // Keep the existing connection count
 		} else {
@@ -38,7 +41,7 @@ func (p *LeastNumberOfRequestsPolicy) SetReadyReplicas(replicas []string) {
 		}
 	}
 
-	p.ReadyReplicas = replicas
+	p.ReadyReplicas = serviceReplicas
 	p.connectionsCount = newConnectionsCount
 }
 

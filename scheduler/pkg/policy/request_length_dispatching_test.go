@@ -11,12 +11,12 @@ import (
 )
 
 func TestSetReadyReplicas(t *testing.T) {
+	logger.Init("info")
 	policy := NewRequestLengthDispatchingPolicy(20000)
 
 	// Initial replicas
-	initialReplicas := []string{
-		"service1-192.168.1.1:8080",
-		"service2-192.168.1.2:8080",
+	initialReplicas := map[string][]string{
+		"service1": {"service1-192.168.1.1:8080", "service1-192.168.1.2:8080"},
 	}
 
 	// Set initial replicas
@@ -28,13 +28,13 @@ func TestSetReadyReplicas(t *testing.T) {
 	}
 
 	for _, pod := range policy.GetReadyReplicas() {
-		fmt.Println(pod.OwnerService)
+		fmt.Println(pod.IP)
 	}
 
+	fmt.Println("--------------------------------")
 	// Update replicas
-	updatedReplicas := []string{
-		"service1-192.168.1.1:8080", // existing
-		"service3-192.168.1.3:8080", // new
+	updatedReplicas := map[string][]string{
+		"service1": {"service1-192.168.1.1:8080", "service1-192.168.1.3:8080"}, // existing
 	}
 
 	// Set updated replicas
@@ -42,14 +42,18 @@ func TestSetReadyReplicas(t *testing.T) {
 
 	// Check if replicas are updated correctly
 	readyReplicas := policy.GetReadyReplicas()
-	if len(readyReplicas) != 3 {
-		t.Errorf("Expected 3 replicas, got %d", len(readyReplicas))
+	for _, pod := range readyReplicas {
+		fmt.Println(pod.IP)
+	}
+
+	if len(readyReplicas) != 2 {
+		t.Errorf("Expected 2 replicas, got %d", len(readyReplicas))
 	}
 
 	// Check if the correct replicas are present
 	expectedIPs := map[string]bool{
 		"192.168.1.1:8080": true,
-		"192.168.1.2:8080": true,
+		"192.168.1.2:8080": false,
 		"192.168.1.3:8080": true,
 	}
 
