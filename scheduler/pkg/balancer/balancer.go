@@ -402,6 +402,11 @@ func (lb *BaichuanScheduler) StartCollectingQueueSize() {
 			wg.Add(1)
 			go func(url string) {
 				defer wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Log.Errorf("Recovered in Collect for %s: %v", url, r)
+					}
+				}()
 				// obtain a permit
 				concurrencyControl <- struct{}{}
 				if err := collector.Collect(url); err != nil {
