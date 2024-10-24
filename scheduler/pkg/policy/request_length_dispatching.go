@@ -46,6 +46,12 @@ func (p *RequestLengthDispatchingPolicy) GetReadyReplicas() []*types.Pod {
 }
 
 func (p *RequestLengthDispatchingPolicy) GetStringReadyReplicas() []string {
+	p.PolicyLock.RLock()
+	defer p.PolicyLock.RUnlock()
+
+	for _, replica := range p.ReadyReplicas {
+		p.StringReplicas = append(p.StringReplicas, replica.IP)
+	}
 	return p.StringReplicas
 }
 
@@ -158,7 +164,12 @@ func (p *RequestLengthDispatchingPolicy) GetPolicyName() string {
 }
 
 func (p *RequestLengthDispatchingPolicy) PrintNumberOfRequests() {
-	logger.Log.Infof("Not implemented yet")
+	p.PolicyLock.RLock()
+	defer p.PolicyLock.RUnlock()
+
+	for _, replica := range p.ReadyReplicas {
+		logger.Log.Infof("Service: %s, Replica: %s, Requests: %d", replica.OwnerService, replica.IP, replica.NumberOfRequests)
+	}
 }
 
 func (p *RequestLengthDispatchingPolicy) GetNumberOfRequests() map[string]int {
