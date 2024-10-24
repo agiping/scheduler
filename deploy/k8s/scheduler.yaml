@@ -63,10 +63,10 @@ spec:
                 topologyKey: kubernetes.io/hostname
       imagePullSecrets:
           - name: baichuan-inference-service
-      terminationGracePeriodSeconds: 120
+      #terminationGracePeriodSeconds: 120
       containers:
       - name: bc-scheduler-rlength
-        image: harbor.ppio.baichuan-ai.com/inferenceservice/baichuan-infer:bcscheduler-retry-v1.1.0
+        image: harbor.ppio.baichuan-ai.com/resourcescheduler/scheduler:20241021200431
         resources:
           requests:
             memory: "1Gi"
@@ -79,6 +79,11 @@ spec:
         args: 
           - "--load-balancer-port=8890"
           - "--retriable-status-codes=500,502,503,504,424,422"
+          - "--policy=request-length-dispatching"
+          - "--request-length-dispatching-threshold=200"
+          - "--namespace=inference-service-test"
+          - "--service-names=chat-service-2-cards,chat-service-4-cards"
+          - "--log-level=info"
         lifecycle:
           preStop:
             exec:
