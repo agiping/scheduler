@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -238,24 +237,26 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	request_id := c.GetHeader("REQUEST_ID")
 
 	// Get the input length from the header to avoid the overhead of request body parsing
-	// promptLengthStr := c.GetHeader("PROMPT_LENGTH")
-	// hereby we use the native header REQUEST_LENGTH as prompt length for quick testing
-	// TODO(Ping Zhang): remove this after testing, replace with PROMPT_LENGTH (token number)
-	promptLengthStr := c.GetHeader("REQUEST_LENGTH")
-	var promptLength int
-	if promptLengthStr == "" {
-		logger.Log.Warn("Prompt length is not provided")
-		promptLength = 0
-	} else {
-		var err error
-		promptLength, err = strconv.Atoi(promptLengthStr)
-		if err != nil {
-			logger.Log.Warn("Prompt length is not a valid integer")
+	/*
+		promptLengthStr := c.GetHeader("PROMPT_LENGTH")
+		var promptLength int
+		if promptLengthStr == "" {
+			logger.Log.Warn("Prompt length is not provided")
 			promptLength = 0
+		} else {
+			var err error
+			promptLength, err = strconv.Atoi(promptLengthStr)
+			if err != nil {
+				logger.Log.Warn("Prompt length is not a valid integer")
+				promptLength = 0
+			}
 		}
-	}
+	*/
 
-	logger.Log.Infof("The estimated prompt length is %d", promptLength)
+	// hereby we use the native header Content-Length as input length for quick testing
+	// TODO(Ping Zhang): remove this after testing, replace with PROMPT_LENGTH (token number)
+	promptLength := int(c.Request.ContentLength)
+	logger.Log.Infof("The estimated input length is %d", promptLength)
 
 	// add request counts and update metrics
 	lb.request_total.Inc()
