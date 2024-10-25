@@ -237,8 +237,11 @@ func (lb *BaichuanScheduler) handleRequest(c *gin.Context) {
 	session_id := c.GetHeader("SESSION_ID")
 	request_id := c.GetHeader("REQUEST_ID")
 
-	// Get the prompt length from the header
-	promptLengthStr := c.GetHeader("PROMPT_LENGTH")
+	// Get the input length from the header to avoid the overhead of request body parsing
+	// promptLengthStr := c.GetHeader("PROMPT_LENGTH")
+	// hereby we use the native header REQUEST_LENGTH as prompt length for quick testing
+	// TODO(Ping Zhang): remove this after testing, replace with PROMPT_LENGTH (token number)
+	promptLengthStr := c.GetHeader("REQUEST_LENGTH")
 	var promptLength int
 	if promptLengthStr == "" {
 		logger.Log.Warn("Prompt length is not provided")
